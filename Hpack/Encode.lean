@@ -25,8 +25,17 @@ def encodeHeaders (headers : Array HeaderField) : ByteArray :=
       out := Bytes.Pool.pushBytes out h.value
     return out
 
+private def encodeStringLiteral (acc : ByteArray) (data : ByteArray) (huffman : Bool) : ByteArray :=
+  if huffman then
+    let coded := Huffman.encode (Bytes.Slice.ofByteArray data)
+    let acc := encodeInteger acc 0x80 7 coded.size
+    Bytes.Pool.pushBytes acc coded
+  else
+    let acc := encodeInteger acc 0x00 7 data.size
+    Bytes.Pool.pushBytes acc data
+
 /-- Encode with indexed static entries when possible. -/
-def encodeHeadersIndexed (headers : Array HeaderField) : ByteArray :=
+def encodeHeadersIndexed (headers : Array HeaderField) (huffman : Bool := false) : ByteArray :=
   Id.run do
     let mut out := ByteArray.empty
     for h in headers do
@@ -36,17 +45,40 @@ def encodeHeadersIndexed (headers : Array HeaderField) : ByteArray :=
       | none =>
         match findStaticName h.name with
         | some idx =>
-          -- Literal without indexing — indexed name
           out := encodeInteger out 0x00 4 idx
-          out := encodeInteger out 0x00 7 h.value.size
-          out := Bytes.Pool.pushBytes out h.value
+          out := encodeStringLiteral out h.value huffman
         | none =>
           out := encodeInteger out 0x00 4 0
-          out := encodeInteger out 0x00 7 h.name.size
-          out := Bytes.Pool.pushBytes out h.name
-          out := encodeInteger out 0x00 7 h.value.size
-          out := Bytes.Pool.pushBytes out h.value
+          out := encodeStringLiteral out h.name huffman
+          out := encodeStringLiteral out h.value huffman
     return out
+
+/-- Encode with incremental indexing into the dynamic table. -/
+def encodeHeadersDynamic (headers : Array HeaderField) (table : DynamicTable)
+    (huffman : Bool := false) : ByteArray × DynamicTable :=
+  Id.run do
+    let mut out := ByteArray.empty
+    let mut table := table
+    for h in headers do
+      match findStaticExact h.name h.value with
+      | some idx =>
+        out := encodeInteger out 0x80 7 idx
+      | none =>
+        match table.entries.findIdx? (fun e => e.name == h.name && e.value == h.value) with
+        | some dynIdx =>
+          let idx := staticTable.size + 1 + dynIdx
+          out := encodeInteger out 0x80 7 idx
+        | none =>
+          match findStaticName h.name with
+          | some idx =>
+            out := encodeInteger out 0x40 6 idx
+            out := encodeStringLiteral out h.value huffman
+          | none =>
+            out := encodeInteger out 0x40 6 0
+            out := encodeStringLiteral out h.name huffman
+            out := encodeStringLiteral out h.value huffman
+          table := table.insert h
+    return (out, table)
 
 /-- Decode a full header block. -/
 def decodeHeaders (block : Bytes.Slice) (table : DynamicTable := .empty) :

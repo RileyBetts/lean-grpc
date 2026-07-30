@@ -118,14 +118,20 @@ private def fullTable : Array (UInt32 × Nat × UInt8) :=
     (0x3fffffff, 30, 256)  -- EOS
   ]
 
-private def matchPrefix (acc : UInt32) (nbits : Nat) : Option UInt8 :=
+private inductive Match where
+  | sym (b : UInt8)
+  | eos
+  | none
+  deriving Inhabited
+
+private def matchPrefix (acc : UInt32) (nbits : Nat) : Match :=
   Id.run do
     for e in fullTable do
       let (code, len, sym) := e
       if len == nbits && code == acc then
-        if sym == 256 then return none -- EOS not emitted as byte
-        return some sym
-    return none
+        if sym == 256 then return .eos
+        return .sym sym
+    return .none
 
 /-- Decode Huffman-coded bytes to raw octets. -/
 def decode (input : Bytes.Slice) : Except Error ByteArray := do
@@ -134,33 +140,70 @@ def decode (input : Bytes.Slice) : Except Error ByteArray := do
   let mut out : ByteArray := ByteArray.empty
   let mut acc : UInt32 := 0
   let mut nbits : Nat := 0
-  -- Read until only padding remains (≤7 bits of 1s)
-  while r.remainingBits > 0 do
+  let mut done := false
+  while !done && r.remainingBits > 0 do
     match r.readBit with
-    | none => break
+    | none => done := true
     | some (r', bit) =>
       r := r'
       acc := (acc <<< 1) ||| (if bit then 1 else 0)
       nbits := nbits + 1
       if nbits ≥ 5 then
         match matchPrefix acc nbits with
-        | some sym =>
-          out := out.push sym
+        | .sym s =>
+          out := out.push s
           acc := 0
           nbits := 0
-        | none =>
+        | .eos =>
+          done := true
+          acc := 0
+          nbits := 0
+        | .none =>
           if nbits > 30 then throw Error.invalid
-  -- Accept EOS padding of 1-bits
+  -- Accept leftover EOS/padding bits of 1s (≤7)
   if nbits > 0 then
     let padMask : UInt32 := (1 <<< nbits.toUInt32) - 1
     if (acc &&& padMask) != padMask then
-      -- allow if remaining are EOS prefix; otherwise invalid
       if nbits > 7 then throw Error.invalid
   return out
 
-/-- Encode using raw path only (H=0 preferred). Huffman encode stub returns input. -/
+/-- Look up Huffman code for a symbol (0..255). -/
+def codeOf (sym : UInt8) : Option (UInt32 × Nat) :=
+  Id.run do
+    for e in fullTable do
+      let (code, len, s) := e
+      if s == sym then return some (code, len)
+    return none
+
+/-- Encode octets with RFC 7541 Huffman coding (EOS padded with 1-bits). -/
 def encode (input : Bytes.Slice) : ByteArray :=
-  input.toByteArray
+  Id.run do
+    let mut bits : Array Bool := #[]
+    let pushCode (bits : Array Bool) (code : UInt32) (len : Nat) : Array Bool :=
+      Id.run do
+        let mut bits := bits
+        for j in [:len] do
+          let bit := ((code >>> (len - 1 - j).toUInt32) &&& 1) == 1
+          bits := bits.push bit
+        return bits
+    for i in [:input.size] do
+      match codeOf (input.get! i) with
+      | none => return input.toByteArray
+      | some (code, len) =>
+        bits := pushCode bits code len
+    bits := pushCode bits 0x3fffffff 30
+    while bits.size % 8 != 0 do
+      bits := bits.push true
+    let mut out := ByteArray.empty
+    let mut i := 0
+    while i < bits.size do
+      let mut b : UInt8 := 0
+      for k in [:8] do
+        if bits[i + k]! then
+          b := b ||| (1 <<< (7 - k).toUInt8)
+      out := out.push b
+      i := i + 8
+    return out
 
 end Huffman
 end Hpack

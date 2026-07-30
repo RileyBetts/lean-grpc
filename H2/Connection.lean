@@ -102,23 +102,45 @@ def handleFrame (st : ConnState) (f : Frame) : Except String (ConnState × Array
         let s := { s with sendWindow := s.sendWindow + (inc : Int) }
         return (st.upsertStream s, #[])
   | .headers =>
-    let mut s := st.getStream f.streamId |>.getD (Stream.create f.streamId st.ourSettings.initialWindowSize)
+    let block ← Frame.stripHeaderPayload f.flags f.payload
+    let existing := st.getStream f.streamId
+    let mut s := existing.getD (Stream.create f.streamId st.ourSettings.initialWindowSize)
+    if existing.isNone then
+      let openCount := st.streams.foldl (fun n s =>
+        if s.state == .closed then n else n + 1) 0
+      if openCount ≥ st.ourSettings.maxConcurrentStreams.toNat then
+        return (st, #[Frame.rstStream f.streamId 0x7]) -- REFUSED_STREAM
     if s.state == .idle then
       s := { s with state := .open }
-    s := { s with headersBuf := Bytes.Pool.pushBytes s.headersBuf f.payload }
-    if Flags.has f.flags Flags.endHeaders then
-      s := { s with endHeaders := true }
+    -- Second header block (after first END_HEADERS) is trailers.
+    if s.gotHeaders then
+      s := { s with trailersBuf := Bytes.Pool.pushBytes s.trailersBuf block }
+      if Flags.has f.flags Flags.endHeaders then
+        s := { s with endTrailers := true }
+    else
+      s := { s with headersBuf := Bytes.Pool.pushBytes s.headersBuf block }
+      if Flags.has f.flags Flags.endHeaders then
+        s := { s with endHeaders := true, gotHeaders := true }
     if Flags.has f.flags Flags.endStream then
-      s := { s with endStreamRemote := true, state := .halfClosedRemote }
+      s := { s with endStreamRemote := true, state := .halfClosedRemote
+                    endTrailers := s.endTrailers || s.gotHeaders }
     let st := { st with lastPeerStreamId := if f.streamId > st.lastPeerStreamId then f.streamId else st.lastPeerStreamId }
     return (st.upsertStream s, #[])
   | .continuation =>
     match st.getStream f.streamId with
     | none => throw "CONTINUATION without HEADERS"
     | some s =>
-      let s := { s with headersBuf := Bytes.Pool.pushBytes s.headersBuf f.payload
-                        endHeaders := Flags.has f.flags Flags.endHeaders }
-      return (st.upsertStream s, #[])
+      if s.gotHeaders && !s.endTrailers then
+        let s := { s with
+          trailersBuf := Bytes.Pool.pushBytes s.trailersBuf f.payload
+          endTrailers := Flags.has f.flags Flags.endHeaders }
+        return (st.upsertStream s, #[])
+      else
+        let s := { s with
+          headersBuf := Bytes.Pool.pushBytes s.headersBuf f.payload
+          endHeaders := Flags.has f.flags Flags.endHeaders
+          gotHeaders := Flags.has f.flags Flags.endHeaders || s.gotHeaders }
+        return (st.upsertStream s, #[])
   | .data =>
     match st.getStream f.streamId with
     | none => throw "DATA on unknown stream"
@@ -127,6 +149,7 @@ def handleFrame (st : ConnState) (f : Frame) : Except String (ConnState × Array
       if Flags.has f.flags Flags.padded then
         if payload.size == 0 then throw "pad"
         let pad := payload.get! 0 |>.toNat
+        if payload.size < 1 + pad then throw "DATA padding truncated"
         payload := payload.extract 1 (payload.size - pad)
       let s := { s with
         dataBuf := Bytes.Pool.pushBytes s.dataBuf payload
@@ -150,6 +173,11 @@ def handleFrame (st : ConnState) (f : Frame) : Except String (ConnState × Array
     return ({ st with wentAway := true }, #[])
   | .priority | .pushPromise | .unknown _ =>
     return (st, #[])
+
+/-- Begin graceful drain: stop accepting new streams conceptually and notify peer. -/
+def goAwayFrames (st : ConnState) (errorCode : UInt32 := 0) : Array Frame :=
+  #[Frame.goAway st.lastPeerStreamId errorCode]
+
 
 /-- Decode as many complete frames as possible from a buffer. -/
 def decodeFrames (buf : Bytes.Slice) : Except String (Array Frame × Nat) := do

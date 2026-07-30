@@ -34,5 +34,9 @@ structure Status where
 def Status.ok : Status := {}
 def Status.unimplemented (msg : String := "") : Status := ⟨.unimplemented, msg⟩
 def Status.internal (msg : String) : Status := ⟨.internal, msg⟩
+def Status.resourceExhausted (msg : String) : Status := ⟨.resourceExhausted, msg⟩
+def Status.cancelled (msg : String := "") : Status := ⟨.cancelled, msg⟩
+def Status.deadlineExceeded (msg : String := "deadline exceeded") : Status :=
+  ⟨.deadlineExceeded, msg⟩
 
 end Grpc

@@ -133,5 +133,18 @@ def headers (streamId : UInt32) (block : ByteArray) (endStream endHeaders : Bool
     if endStream then Flags.union f Flags.endStream else f
   ⟨.headers, flags, streamId, block⟩
 
+/-- Strip PADDED / PRIORITY framing from a HEADERS payload, leaving the HPACK block. -/
+def stripHeaderPayload (flags : Flags) (payload : ByteArray) : Except String ByteArray := do
+  let mut p := payload
+  if Flags.has flags Flags.padded then
+    if p.size == 0 then throw "HEADERS pad length missing"
+    let pad := p.get! 0 |>.toNat
+    if p.size < 1 + pad then throw "HEADERS padding truncated"
+    p := p.extract 1 (p.size - pad)
+  if Flags.has flags Flags.priority then
+    if p.size < 5 then throw "HEADERS priority truncated"
+    p := p.extract 5 p.size
+  return p
+
 end Frame
 end H2

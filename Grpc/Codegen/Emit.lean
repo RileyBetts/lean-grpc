@@ -123,12 +123,18 @@ def emitFromProto (text : String) : IO String := do
     out := out ++ s!"structure {svc.name}Stub where\n  channel : Grpc.Channel\n\n"
     out := out ++ s!"namespace {svc.name}Stub\n\n"
     for rpc in svc.rpcs do
+      let full := if pkg.isEmpty then svc.name else pkg ++ "." ++ svc.name
       if !rpc.clientStreaming && !rpc.serverStreaming then
         out := out ++ s!"def {rpc.name} (self : {svc.name}Stub) (req : ByteArray) : IO Grpc.CallResult :=\n"
-        let full := if pkg.isEmpty then svc.name else pkg ++ "." ++ svc.name
         out := out ++ s!"  Grpc.Channel.unary self.channel \"{full}\" \"{rpc.name}\" req\n\n"
       else
-        out := out ++ s!"-- TODO streaming: {rpc.name}\n"
+        let mode :=
+          if rpc.clientStreaming && rpc.serverStreaming then "bidi"
+          else if rpc.serverStreaming then "server-streaming"
+          else "client-streaming"
+        out := out ++ s!"/-- {mode} `{rpc.name}` — use `H2.Client` with length-prefixed messages;\n"
+        out := out ++ s!"    path `/{full}/{rpc.name}`. -/\n"
+        out := out ++ s!"def {rpc.name}Path : String := \"/{full}/{rpc.name}\"\n\n"
     out := out ++ s!"end {svc.name}Stub\n\n"
     let full := if pkg.isEmpty then svc.name else pkg ++ "." ++ svc.name
     out := out ++ s!"def register{svc.name} (s : Grpc.Server) (handlers : Array (String × Grpc.UnaryHandler)) : Grpc.Server := Id.run do\n"

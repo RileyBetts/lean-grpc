@@ -7,6 +7,7 @@ import Hpack
 import H2
 import Proto
 import Grpc.Status
+import Grpc.Compression
 import Grpc.Message
 import Grpc.Metadata
 import Grpc.Server

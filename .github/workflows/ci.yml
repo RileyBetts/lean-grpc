@@ -13,22 +13,84 @@ jobs:
         with:
           test: false
       - name: Build libraries and tests
-        run: lake build bytesTests hpackTests h2Tests grpcTests helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary
+        run: lake build bytesTests hpackTests h2Tests grpcTests trailersServer trailersLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary h2specServer routeGuideServer routeGuideClient
       - name: Unit tests
         run: |
           ./.lake/build/bin/bytesTests
           ./.lake/build/bin/hpackTests
           ./.lake/build/bin/h2Tests
           ./.lake/build/bin/grpcTests
+          ./.lake/build/bin/trailersLoopback
       - name: Codegen smoke
         run: |
-          LEAN_GRPC_OUT=/tmp/lean-grpc-gen mkdir -p /tmp/lean-grpc-gen
+          mkdir -p /tmp/lean-grpc-gen
           LEAN_GRPC_OUT=/tmp/lean-grpc-gen ./.lake/build/bin/protoc-gen-lean4-grpc examples/helloworld.proto
+          LEAN_GRPC_OUT=/tmp/lean-grpc-gen ./.lake/build/bin/protoc-gen-lean4-grpc examples/route_guide.proto
           test -f /tmp/lean-grpc-gen/Generated.lean
-      - name: Interop loopback
+      - name: Lean↔Lean interop cases
         run: |
           ./.lake/build/bin/interopServer &
           pid=$!
           sleep 1
-          ./.lake/build/bin/interopClient 127.0.0.1 10000 empty_unary
+          for c in empty_unary large_unary status_code_and_message custom_metadata cancel_after_begin server_streaming client_streaming; do
+            ./.lake/build/bin/interopClient 127.0.0.1 10000 "$c"
+          done
           kill $pid
+      - name: Helloworld + RouteGuide smoke
+        run: |
+          ./.lake/build/bin/helloworldServer &
+          pid=$!
+          sleep 0.5
+          ./.lake/build/bin/helloworldClient 127.0.0.1 50051 World
+          kill $pid
+          ./.lake/build/bin/routeGuideServer &
+          pid=$!
+          sleep 0.5
+          ./.lake/build/bin/routeGuideClient 127.0.0.1 50052
+          kill $pid
+
+  interop-grpc-go:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          test: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Install Go interop tools
+        run: |
+          go install google.golang.org/grpc/interop/client@latest
+          go install google.golang.org/grpc/interop/server@latest
+      - name: Build Lean interop binaries
+        run: lake build interopServer interopClient
+      - name: Lean server ← grpc-go client
+        run: |
+          chmod +x scripts/interop-lean-go.sh scripts/run-go-to-lean.sh
+          ./scripts/run-go-to-lean.sh
+      - name: Lean client → grpc-go server
+        run: |
+          chmod +x scripts/interop-go-lean.sh
+          GRPC_PORT=10001 ./scripts/interop-go-lean.sh
+
+  h2spec:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          test: false
+      - name: h2spec (soft gate)
+        run: |
+          chmod +x scripts/h2spec.sh
+          ./scripts/h2spec.sh
+      - name: Upload h2spec log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h2spec-log
+          path: /tmp/lean-grpc-h2spec.txt
+          if-no-files-found: ignore

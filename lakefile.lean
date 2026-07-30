@@ -28,6 +28,12 @@ lean_exe hpackTests where
 lean_exe h2Tests where
   root := `Tests.H2Main
 
+lean_exe trailersServer where
+  root := `Tests.TrailersServer
+
+lean_exe trailersLoopback where
+  root := `Tests.TrailersLoopback
+
 lean_exe grpcTests where
   root := `Tests.GrpcMain
 
@@ -45,6 +51,15 @@ lean_exe interopClient where
 
 lean_exe benchUnary where
   root := `Bench.Unary
+
+lean_exe h2specServer where
+  root := `Tests.H2specServer
+
+lean_exe routeGuideServer where
+  root := `Examples.RouteGuide.Server
+
+lean_exe routeGuideClient where
+  root := `Examples.RouteGuide.Client
 
 lean_exe protocGenLean4Grpc where
   root := `Grpc.Codegen.Plugin

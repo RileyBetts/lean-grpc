@@ -6,6 +6,7 @@ import H2
 import Grpc.Client
 import Grpc.Status
 import Grpc.Message
+import Grpc.Metadata
 
 namespace Grpc
 
@@ -31,11 +32,16 @@ def get (ch : Channel) : IO H2.ClientConn := do
     ch.conn.set (some c)
     return c
 
-def unary (ch : Channel) (service method : String) (request : ByteArray) : IO CallResult := do
+def unary (ch : Channel) (service method : String) (request : ByteArray)
+    (metadata : Metadata := {}) (timeout? : Option String := none) : IO CallResult := do
   if request.size > ch.maxMsgSize then
-    return { status := .internal "message too large", message := ByteArray.empty, headers := #[] }
+    return { status := .resourceExhausted "message too large", message := ByteArray.empty,
+             headers := #[], trailers := #[] }
   let c ← get ch
-  Client.unaryCall c service method ch.host request
+  let mut extra := Metadata.toFields metadata
+  if let some t := timeout? then
+    extra := extra.push (Metadata.timeout t)
+  Client.unaryCall c service method ch.host request extra
 
 def close (ch : Channel) : IO Unit := do
   ch.conn.set none

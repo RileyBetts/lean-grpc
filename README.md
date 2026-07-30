@@ -11,25 +11,28 @@ Standalone project (not part of Anchor Chain). Once the library is well tested, 
 | Layer | Package | Notes |
 |---|---|---|
 | Bytes / slices | `Bytes` | Hot-path slice views, BE helpers, buffer pool |
-| HPACK | `Hpack` | Static table, encode/decode, Huffman decode |
-| HTTP/2 h2c | `H2` | Frames, settings, flow control, client/server |
-| Protobuf (minimal) | `Proto` | Wire codec + helloworld/interop messages |
-| gRPC | `Grpc` | Unary client/server, channel, streaming helpers, TLS stub |
+| HPACK | `Hpack` | Static + dynamic table, Huffman encode/decode |
+| HTTP/2 h2c | `H2` | Frames, settings, flow control, trailers, concurrent accept, GOAWAY helper |
+| Protobuf (minimal) | `Proto` | Wire codec + helloworld/interop/route_guide messages |
+| gRPC | `Grpc` | Unary + buffered/incremental streaming, channel, metadata, timeouts, gzip (stored), TLS stub |
 | Codegen | `protoc-gen-lean4-grpc` | Emits Lean stubs from `.proto` services |
+
+**Tested:** unit tests, trailers loopback, helloworld, Lean↔Lean interop (unary + streaming cases), Lean↔Go core unary/cancel cases, RouteGuide smoke. See the matrix in [docs/conformance.md](docs/conformance.md). h2spec and tonic benches are not claimed green yet.
 
 TLS: use an external terminator (see [docs/tls-envoy.md](docs/tls-envoy.md)). `Grpc.Tls` is a reserved API.
 
-**Protobuf:** [Lean-zh/protobuf](https://github.com/Lean-zh/protobuf) is the preferred full protobuf stack; it currently pins Lean 4.27 while this repo targets 4.32.1 for `Std.Async`. We ship a minimal codec and will switch the Lake `require` when toolchains align.
+**Protobuf:** [Lean-zh/protobuf](https://github.com/Lean-zh/protobuf) is preferred when it tracks Lean 4.32.1; until then we ship a minimal codec.
 
 ## Build
 
 ```bash
 lake build
-lake build bytesTests hpackTests h2Tests grpcTests
+lake build bytesTests hpackTests h2Tests grpcTests trailersLoopback
 ./.lake/build/bin/bytesTests
 ./.lake/build/bin/hpackTests
 ./.lake/build/bin/h2Tests
 ./.lake/build/bin/grpcTests
+./.lake/build/bin/trailersLoopback
 ```
 
 ## Helloworld (h2c)
@@ -43,10 +46,16 @@ lake build helloworldServer helloworldClient
 ## Interop
 
 ```bash
-lake build interopServer interopClient
-./.lake/build/bin/interopServer &
-./.lake/build/bin/interopClient 127.0.0.1 10000 empty_unary
-./.lake/build/bin/interopClient 127.0.0.1 10000 large_unary
+./scripts/interop-lean-go.sh          # Go client → Lean server
+GRPC_PORT=10001 ./scripts/interop-go-lean.sh  # Lean client → Go server
+```
+
+## RouteGuide
+
+```bash
+lake build routeGuideServer routeGuideClient
+./.lake/build/bin/routeGuideServer &
+./.lake/build/bin/routeGuideClient 127.0.0.1 50052
 ```
 
 ## Codegen
@@ -54,6 +63,7 @@ lake build interopServer interopClient
 ```bash
 lake build protocGenLean4Grpc
 LEAN_GRPC_OUT=./examples/generated ./.lake/build/bin/protoc-gen-lean4-grpc examples/helloworld.proto
+LEAN_GRPC_OUT=./examples/generated ./.lake/build/bin/protoc-gen-lean4-grpc examples/route_guide.proto
 ```
 
 ## License
