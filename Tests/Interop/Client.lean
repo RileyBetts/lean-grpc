@@ -119,4 +119,43 @@ def main (args : List String) : IO Unit := do
     if r.aggregatedPayloadSize != (27182+8+1828+45904).toUInt32 then
       throw (IO.userError s!"agg {r.aggregatedPayloadSize}")
     IO.println "client_streaming OK"
+  | "ping_pong" | "full_duplex" =>
+    let respSizes : Array Nat := #[31415, 9, 2653, 58979]
+    let mut body := ByteArray.empty
+    for i in [:respSizes.size] do
+      let req := Proto.StreamingOutputCallRequest.encode {
+        responseParameters := #[respSizes[i]!.toUInt32]
+      }
+      body := Bytes.Pool.pushBytes body (Grpc.Message.encodeId req)
+    let c ← Grpc.Channel.get ch
+    let headers : Array Hpack.HeaderField := #[
+      Grpc.Metadata.methodPost,
+      Grpc.Metadata.schemeHttp,
+      ⟨Grpc.Metadata.ascii ":authority", Grpc.Metadata.ascii host⟩,
+      Grpc.Metadata.path "grpc.testing.TestService" "FullDuplexCall",
+      Grpc.Metadata.contentTypeGrpc,
+      Grpc.Metadata.teTrailers
+    ]
+    let resp ← H2.Client.unary c headers body
+    let payloads ← IO.ofExcept (Grpc.Message.decodeAll (Bytes.Slice.ofByteArray resp.data))
+    if payloads.size != 4 then throw (IO.userError s!"ping_pong got {payloads.size}")
+    for i in [:4] do
+      let m ← IO.ofExcept (Proto.StreamingOutputCallResponse.decode payloads[i]!)
+      if m.payloadBody.size != respSizes[i]! then
+        throw (IO.userError s!"ping_pong size[{i}]")
+    IO.println s!"{case_} OK"
+  | "empty_stream" =>
+    let c ← Grpc.Channel.get ch
+    let headers : Array Hpack.HeaderField := #[
+      Grpc.Metadata.methodPost,
+      Grpc.Metadata.schemeHttp,
+      ⟨Grpc.Metadata.ascii ":authority", Grpc.Metadata.ascii host⟩,
+      Grpc.Metadata.path "grpc.testing.TestService" "FullDuplexCall",
+      Grpc.Metadata.contentTypeGrpc,
+      Grpc.Metadata.teTrailers
+    ]
+    let resp ← H2.Client.unary c headers ByteArray.empty
+    let payloads ← IO.ofExcept (Grpc.Message.decodeAll (Bytes.Slice.ofByteArray resp.data))
+    if payloads.size != 0 then throw (IO.userError "empty_stream expected no messages")
+    IO.println "empty_stream OK"
   | other => throw (IO.userError s!"unknown case {other}")

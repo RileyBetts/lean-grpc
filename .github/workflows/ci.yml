@@ -32,7 +32,8 @@ jobs:
           ./.lake/build/bin/interopServer &
           pid=$!
           sleep 1
-          for c in empty_unary large_unary status_code_and_message custom_metadata cancel_after_begin server_streaming client_streaming; do
+          for c in empty_unary large_unary status_code_and_message custom_metadata cancel_after_begin \
+                   server_streaming client_streaming ping_pong empty_stream; do
             ./.lake/build/bin/interopClient 127.0.0.1 10000 "$c"
           done
           kill $pid

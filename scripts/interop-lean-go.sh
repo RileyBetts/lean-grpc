@@ -3,7 +3,10 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${GRPC_PORT:-10000}"
-CASES=(empty_unary large_unary status_code_and_message custom_metadata cancel_after_begin)
+CASES=(
+  empty_unary large_unary status_code_and_message custom_metadata cancel_after_begin
+  server_streaming client_streaming ping_pong empty_stream
+)
 GOBIN="${GOBIN:-$(go env GOPATH)/bin}"
 
 cd "$ROOT"

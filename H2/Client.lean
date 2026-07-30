@@ -77,9 +77,18 @@ def startRequest (c : ClientConn) (headers : Array Hpack.HeaderField) (body : By
   st := st.upsertStream s
   c.state.set st
   let block := Hpack.encodeHeadersIndexed headers
-  sendFrames c.sock #[Frame.headers sid block (body.size == 0 && endStream) true]
-  if body.size > 0 then
-    sendFrames c.sock (Frame.dataFragmented sid body endStream st.ourSettings.maxFrameSize.toNat)
+  -- Always end the header block without END_STREAM when we will send DATA
+  -- (including an empty DATA frame). Some peers (grpc-go FullDuplex empty_stream)
+  -- expect END_STREAM on DATA, not on the initial HEADERS.
+  if body.size == 0 && endStream then
+    sendFrames c.sock #[
+      Frame.headers sid block false true,
+      Frame.data sid ByteArray.empty true
+    ]
+  else
+    sendFrames c.sock #[Frame.headers sid block (body.size == 0 && endStream) true]
+    if body.size > 0 then
+      sendFrames c.sock (Frame.dataFragmented sid body endStream st.ourSettings.maxFrameSize.toNat)
   return sid
 
 /-- Wait for response headers + data + optional trailers. -/
