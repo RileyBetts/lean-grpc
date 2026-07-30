@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          test: false
+      - name: Build libraries and tests
+        run: lake build bytesTests hpackTests h2Tests grpcTests helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary
+      - name: Unit tests
+        run: |
+          ./.lake/build/bin/bytesTests
+          ./.lake/build/bin/hpackTests
+          ./.lake/build/bin/h2Tests
+          ./.lake/build/bin/grpcTests
+      - name: Codegen smoke
+        run: |
+          LEAN_GRPC_OUT=/tmp/lean-grpc-gen mkdir -p /tmp/lean-grpc-gen
+          LEAN_GRPC_OUT=/tmp/lean-grpc-gen ./.lake/build/bin/protoc-gen-lean4-grpc examples/helloworld.proto
+          test -f /tmp/lean-grpc-gen/Generated.lean
+      - name: Interop loopback
+        run: |
+          ./.lake/build/bin/interopServer &
+          pid=$!
+          sleep 1
+          ./.lake/build/bin/interopClient 127.0.0.1 10000 empty_unary
+          kill $pid

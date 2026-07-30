@@ -1,0 +1,44 @@
+/-
+Copyright (c) 2026 RileyBetts. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+-/
+import H2
+import Grpc.Client
+import Grpc.Status
+import Grpc.Message
+
+namespace Grpc
+
+/-- Client channel with connection reuse. -/
+structure Channel where
+  host : String
+  port : UInt16
+  conn : IO.Ref (Option H2.ClientConn)
+  maxMsgSize : Nat := 4 * 1024 * 1024
+
+namespace Channel
+
+def connectH2c (host : String) (port : UInt16) : IO Channel := do
+  let c ← H2.Client.connectH2c host port
+  let r ← IO.mkRef (some c)
+  return { host, port, conn := r }
+
+def get (ch : Channel) : IO H2.ClientConn := do
+  match ← ch.conn.get with
+  | some c => return c
+  | none =>
+    let c ← H2.Client.connectH2c ch.host ch.port
+    ch.conn.set (some c)
+    return c
+
+def unary (ch : Channel) (service method : String) (request : ByteArray) : IO CallResult := do
+  if request.size > ch.maxMsgSize then
+    return { status := .internal "message too large", message := ByteArray.empty, headers := #[] }
+  let c ← get ch
+  Client.unaryCall c service method ch.host request
+
+def close (ch : Channel) : IO Unit := do
+  ch.conn.set none
+
+end Channel
+end Grpc

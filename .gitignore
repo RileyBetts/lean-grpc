@@ -1,0 +1,7 @@
+.lake/
+*.olean
+*.ilean
+*.c.o
+__pycache__/
+.DS_Store
+/examples/generated/

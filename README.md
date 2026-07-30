@@ -1,0 +1,57 @@
+# Pure Lean 4 gRPC Stack
+
+General-purpose **pure Lean** gRPC implementation: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
+
+## Status
+
+| Layer | Package | Notes |
+|---|---|---|
+| Bytes / slices | `Bytes` | Hot-path slice views, BE helpers, buffer pool |
+| HPACK | `Hpack` | Static table, encode/decode, Huffman decode |
+| HTTP/2 h2c | `H2` | Frames, settings, flow control, client/server |
+| Protobuf (minimal) | `Proto` | Wire codec + helloworld/interop messages |
+| gRPC | `Grpc` | Unary client/server, channel, streaming helpers, TLS stub |
+| Codegen | `protoc-gen-lean4-grpc` | Emits Lean stubs from `.proto` services |
+
+TLS: use an external terminator (see [docs/tls-envoy.md](docs/tls-envoy.md)). `Grpc.Tls` is a reserved API.
+
+**Protobuf:** [Lean-zh/protobuf](https://github.com/Lean-zh/protobuf) is the preferred full protobuf stack; it currently pins Lean 4.27 while this repo targets 4.32.1 for `Std.Async`. We ship a minimal codec and will switch the Lake `require` when toolchains align.
+
+## Build
+
+```bash
+lake build
+lake build bytesTests hpackTests h2Tests grpcTests
+./.lake/build/bin/bytesTests
+./.lake/build/bin/hpackTests
+./.lake/build/bin/h2Tests
+./.lake/build/bin/grpcTests
+```
+
+## Helloworld (h2c)
+
+```bash
+lake build helloworldServer helloworldClient
+./.lake/build/bin/helloworldServer &
+./.lake/build/bin/helloworldClient 127.0.0.1 50051 World
+```
+
+## Interop
+
+```bash
+lake build interopServer interopClient
+./.lake/build/bin/interopServer &
+./.lake/build/bin/interopClient 127.0.0.1 10000 empty_unary
+./.lake/build/bin/interopClient 127.0.0.1 10000 large_unary
+```
+
+## Codegen
+
+```bash
+lake build protocGenLean4Grpc
+LEAN_GRPC_OUT=./examples/generated ./.lake/build/bin/protoc-gen-lean4-grpc examples/helloworld.proto
+```
+
+## License
+
+Apache-2.0
