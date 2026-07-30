@@ -53,18 +53,44 @@ def EchoStatus.decode (b : ByteArray) : Except String EchoStatus := do
     message := (Wire.fieldString? fields 2).getD ""
   }
 
+/-- grpc.testing.PayloadType enum. -/
+inductive PayloadType where
+  | compressable
+  | uncompressable
+  | random
+  deriving BEq, Inhabited
+
+def PayloadType.toUInt32 : PayloadType → UInt32
+  | .compressable => 0
+  | .uncompressable => 1
+  | .random => 2
+
+def PayloadType.ofUInt32 : UInt32 → PayloadType
+  | 1 => .uncompressable
+  | 2 => .random
+  | _ => .compressable
+
 /-- grpc.testing.Payload { PayloadType type = 1; bytes body = 2; } -/
 structure Payload where
+  type : PayloadType := .compressable
   body : ByteArray := ByteArray.empty
   deriving Inhabited
 
 def Payload.encode (p : Payload) : ByteArray :=
-  if p.body.isEmpty then ByteArray.empty
-  else Wire.encodeBytes ByteArray.empty 2 p.body
+  Id.run do
+    let mut acc := ByteArray.empty
+    if p.type != .compressable then
+      acc := Wire.encodeEnum acc 1 p.type.toUInt32
+    if !p.body.isEmpty then
+      acc := Wire.encodeBytes acc 2 p.body
+    return acc
 
 def Payload.decode (b : ByteArray) : Except String Payload := do
   let fields ← Wire.decodeFields (Bytes.Slice.ofByteArray b)
-  return { body := (Wire.fieldBytes? fields 2).getD ByteArray.empty }
+  return {
+    type := PayloadType.ofUInt32 ((Wire.fieldUInt32? fields 1).getD 0)
+    body := (Wire.fieldBytes? fields 2).getD ByteArray.empty
+  }
 
 /-- Interop SimpleRequest (subset of grpc.testing.SimpleRequest). -/
 structure SimpleRequest where
@@ -143,24 +169,42 @@ structure StreamingOutputCallRequest where
   responseStatus : Option EchoStatus := none
   deriving Inhabited
 
+/-- Nested ResponseParameters; sizes are also exposed as a flat array for callers. -/
+structure ResponseParameters where
+  size : UInt32 := 0
+  intervalUs : UInt32 := 0
+  deriving Inhabited
+
+def ResponseParameters.encode (p : ResponseParameters) : ByteArray :=
+  Id.run do
+    let mut acc := ByteArray.empty
+    if p.size != 0 then acc := Wire.encodeUInt32 acc 1 p.size
+    if p.intervalUs != 0 then acc := Wire.encodeUInt32 acc 2 p.intervalUs
+    return acc
+
+def ResponseParameters.decode (b : ByteArray) : Except String ResponseParameters := do
+  let fields ← Wire.decodeFields (Bytes.Slice.ofByteArray b)
+  return {
+    size := (Wire.fieldUInt32? fields 1).getD 0
+    intervalUs := (Wire.fieldUInt32? fields 2).getD 0
+  }
+
 def StreamingOutputCallRequest.encode (r : StreamingOutputCallRequest) : ByteArray :=
   Id.run do
     let mut acc := ByteArray.empty
     for sz in r.responseParameters do
-      -- ResponseParameters { size = 1; } nested in field 2
-      let inner := Wire.encodeUInt32 ByteArray.empty 1 sz
-      acc := Wire.encodeBytes acc 2 inner
+      -- ResponseParameters { size = 1; } nested in field 2 (repeated)
+      acc := Wire.encodeMessage acc 2 (ResponseParameters.encode { size := sz })
     if let some st := r.responseStatus then
-      acc := Wire.encodeBytes acc 7 (EchoStatus.encode st)
+      acc := Wire.encodeMessage acc 7 (EchoStatus.encode st)
     return acc
 
 def StreamingOutputCallRequest.decode (b : ByteArray) : Except String StreamingOutputCallRequest := do
   let fields ← Wire.decodeFields (Bytes.Slice.ofByteArray b)
   let mut sizes : Array UInt32 := #[]
-  for f in fields do
-    if f.number == 2 && f.wireType == .lengthDelimited then
-      let inner ← Wire.decodeFields (Bytes.Slice.ofByteArray f.payload)
-      sizes := sizes.push ((Wire.fieldUInt32? inner 1).getD 0)
+  for nested in Wire.fieldBytesMany fields 2 do
+    let p ← ResponseParameters.decode nested
+    sizes := sizes.push p.size
   let responseStatus ←
     match Wire.fieldBytes? fields 7 with
     | none => pure none

@@ -52,17 +52,27 @@ def main : IO Unit := do
     if !s.endStreamRemote then throw (IO.userError "endStream")
     if s.trailersBuf.isEmpty then throw (IO.userError "empty trailers buf")
 
-  -- responseFrames shape: headers + data + trailers
-  let frames := H2.responseFrames 1
+  -- responseHeaderFrames: HEADERS without END_STREAM when body/trailers follow
+  let hdrs := H2.responseHeaderFrames 1
     #[⟨ascii ":status", ascii "200"⟩]
-    (ByteArray.mk #[1,2,3])
-    #[⟨ascii "grpc-status", ascii "0"⟩]
-    16384 false true
-  if frames.size < 3 then throw (IO.userError s!"frame count {frames.size}")
-  if frames[0]!.type != .headers then throw (IO.userError "f0")
-  if H2.Flags.has frames[0]!.flags H2.Flags.endStream then throw (IO.userError "f0 es")
-  if frames[frames.size - 1]!.type != .headers then throw (IO.userError "last")
-  if !(H2.Flags.has frames[frames.size - 1]!.flags H2.Flags.endStream) then
-    throw (IO.userError "trailers need ES")
+    false false false true
+  if hdrs.size != 1 then throw (IO.userError s!"header frame count {hdrs.size}")
+  if hdrs[0]!.type != .headers then throw (IO.userError "f0")
+  if H2.Flags.has hdrs[0]!.flags H2.Flags.endStream then throw (IO.userError "f0 es")
+
+  -- Flow control: peer INITIAL_WINDOW_SIZE=1 → first DATA length 1
+  let st0 := H2.ConnState.create
+  let setWin := H2.Frame.settings #[(.initialWindowSize, 1)]
+  let (st1, _) ← IO.ofExcept (H2.handleFrame st0 setWin)
+  let hReq := H2.Frame.headers 1 block true true
+  let (st2, _) ← IO.ofExcept (H2.handleFrame st1 hReq)
+  let (st3, dataFrames) := H2.queueSend st2 1 (ByteArray.mk #[0x6f, 0x6b]) #[] true
+  if dataFrames.size != 1 then throw (IO.userError s!"data frames {dataFrames.size}")
+  if dataFrames[0]!.payload.size != 1 then throw (IO.userError "expected 1-byte DATA")
+  if H2.Flags.has dataFrames[0]!.flags H2.Flags.endStream then throw (IO.userError "unexpected ES")
+  match st3.getStream 1 with
+  | none => throw (IO.userError "stream gone")
+  | some s =>
+    if s.pendingSend.size != 1 then throw (IO.userError "pending not held")
 
   IO.println "h2Tests OK"

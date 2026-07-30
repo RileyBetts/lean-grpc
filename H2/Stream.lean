@@ -25,6 +25,12 @@ structure Stream where
   headersBuf : ByteArray
   trailersBuf : ByteArray
   dataBuf : ByteArray
+  /-- Outbound body bytes waiting for flow-control window. -/
+  pendingSend : ByteArray
+  /-- Trailers to send after `pendingSend` drains (empty = none). -/
+  pendingTrailers : Array Hpack.HeaderField
+  /-- When true, END_STREAM after pending send drains (no trailers). -/
+  pendingEndStream : Bool
   endHeaders : Bool
   endTrailers : Bool
   endStreamRemote : Bool
@@ -39,13 +45,17 @@ structure Stream where
 
 namespace Stream
 
-def create (id : UInt32) (initWindow : UInt32) : Stream :=
+/-- `sendInit` = peer INITIAL_WINDOW_SIZE; `recvInit` = our INITIAL_WINDOW_SIZE. -/
+def create (id : UInt32) (sendInit recvInit : UInt32) : Stream :=
   { id, state := .idle
-    sendWindow := initWindow.toNat
-    recvWindow := initWindow.toNat
+    sendWindow := sendInit.toNat
+    recvWindow := recvInit.toNat
     headersBuf := ByteArray.empty
     trailersBuf := ByteArray.empty
     dataBuf := ByteArray.empty
+    pendingSend := ByteArray.empty
+    pendingTrailers := #[]
+    pendingEndStream := false
     endHeaders := false
     endTrailers := false
     endStreamRemote := false

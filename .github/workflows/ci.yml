@@ -75,6 +75,10 @@ jobs:
         run: |
           chmod +x scripts/interop-go-lean.sh
           GRPC_PORT=10001 ./scripts/interop-go-lean.sh
+      - name: Go client gzip → Lean unary
+        run: |
+          chmod +x scripts/gzip-go-lean.sh
+          GRPC_PORT=10002 ./scripts/gzip-go-lean.sh
 
   h2spec:
     runs-on: ubuntu-latest
@@ -84,14 +88,16 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           test: false
-      - name: h2spec (soft gate)
+      - name: h2spec core (hard gate)
         run: |
           chmod +x scripts/h2spec.sh
           ./scripts/h2spec.sh
-      - name: Upload h2spec log
+      - name: Upload h2spec logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: h2spec-log
-          path: /tmp/lean-grpc-h2spec.txt
+          path: |
+            /tmp/lean-grpc-h2spec-core.txt
+            /tmp/lean-grpc-h2spec.txt
           if-no-files-found: ignore

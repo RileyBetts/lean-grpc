@@ -67,28 +67,30 @@ def connectH2c (host : String) (port : UInt16) : IO ClientConn := do
   readBuf.set buf
   return { sock, state, readBuf }
 
-/-- Start a new request stream; returns stream id. -/
+/-- Start a new request stream; returns stream id.
+    When `endStream = false`, headers are sent and the stream stays open for DATA. -/
 def startRequest (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray)
     (endStream : Bool := true) : IO UInt32 := do
   let mut st ← c.state.get
   let sid := st.nextClientStreamId
   st := { st with nextClientStreamId := sid + 2 }
-  let s := { Stream.create sid st.ourSettings.initialWindowSize with state := .open }
+  let s := { Stream.create sid st.peerSettings.initialWindowSize st.ourSettings.initialWindowSize
+             with state := .open }
   st := st.upsertStream s
   c.state.set st
   let block := Hpack.encodeHeadersIndexed headers
-  -- Always end the header block without END_STREAM when we will send DATA
-  -- (including an empty DATA frame). Some peers (grpc-go FullDuplex empty_stream)
-  -- expect END_STREAM on DATA, not on the initial HEADERS.
+  -- Peers such as grpc-go FullDuplex empty_stream expect END_STREAM on DATA,
+  -- not on the initial HEADERS, when the request body is empty.
   if body.size == 0 && endStream then
     sendFrames c.sock #[
       Frame.headers sid block false true,
       Frame.data sid ByteArray.empty true
     ]
+  else if body.size == 0 && !endStream then
+    sendFrames c.sock #[Frame.headers sid block false true]
   else
-    sendFrames c.sock #[Frame.headers sid block (body.size == 0 && endStream) true]
-    if body.size > 0 then
-      sendFrames c.sock (Frame.dataFragmented sid body endStream st.ourSettings.maxFrameSize.toNat)
+    sendFrames c.sock #[Frame.headers sid block false true]
+    sendFrames c.sock (Frame.dataFragmented sid body endStream st.ourSettings.maxFrameSize.toNat)
   return sid
 
 /-- Wait for response headers + data + optional trailers. -/

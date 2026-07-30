@@ -13,7 +13,182 @@ import Grpc.Metadata
 
 namespace Grpc.Stream
 
-/- Real streaming helpers over multiplexed HTTP/2 DATA frames. -/
+/-- Concatenate already length-prefixed gRPC frames. -/
+def collectServerStream (msgs : Array ByteArray) : ByteArray :=
+  Id.run do
+    let mut out := ByteArray.empty
+    for m in msgs do
+      out := Bytes.Pool.pushBytes out m
+    return out
+
+/-- Split a DATA buffer into complete gRPC messages; returns messages + remainder. -/
+def decodeAvailable (buf : ByteArray) : Except String (Array ByteArray × ByteArray) := do
+  let mut s := Bytes.Slice.ofByteArray buf
+  let mut out : Array ByteArray := #[]
+  while s.size ≥ 5 do
+    let len ← Bytes.BE.readU32 s 1 |>.elim (throw "len") pure
+    let total := 5 + len.toNat
+    if s.size < total then break
+    let (p, rest) ← Message.decodeOne s
+    out := out.push p
+    s := rest
+  return (out, s.toByteArray)
+
+/-! # Public streaming API (client) -/
+
+structure StreamWriter where
+  conn : H2.ClientConn
+  streamId : UInt32
+  closed : IO.Ref Bool
+
+structure StreamReader where
+  conn : H2.ClientConn
+  streamId : UInt32
+  pending : IO.Ref ByteArray
+  headers : IO.Ref (Option (Array Hpack.HeaderField))
+  trailers : IO.Ref (Option (Array Hpack.HeaderField))
+  done : IO.Ref Bool
+
+structure ClientStream where
+  writer : StreamWriter
+  reader : StreamReader
+
+namespace StreamWriter
+
+def send (w : StreamWriter) (msg : ByteArray) : IO Unit := do
+  if ← w.closed.get then throw (IO.userError "stream closed")
+  let st ← w.conn.state.get
+  -- Best-effort: wait briefly if connection send window is exhausted.
+  let mut spins : Nat := 0
+  while st.sendConnWindow ≤ 0 && spins < 50 do
+    spins := spins + 1
+    IO.sleep 1
+  H2.sendFrames w.conn.sock (H2.Frame.dataFragmented w.streamId (Message.encodeId msg) false
+    st.ourSettings.maxFrameSize.toNat)
+
+def halfClose (w : StreamWriter) : IO Unit := do
+  if ← w.closed.get then return
+  w.closed.set true
+  H2.sendFrames w.conn.sock #[H2.Frame.data w.streamId ByteArray.empty true]
+
+end StreamWriter
+
+namespace StreamReader
+
+/-- Pump connection until headers are available. -/
+partial def ensureHeaders (r : StreamReader) (fuel : Nat := 200) : IO (Array Hpack.HeaderField) := do
+  if let some h ← r.headers.get then return h
+  if fuel == 0 then throw (IO.userError "timeout waiting headers")
+  match ← r.conn.state.get >>= (fun st => pure (st.getStream r.streamId)) with
+  | none => pure ()
+  | some s =>
+    if s.endHeaders then
+      let st ← r.conn.state.get
+      match Hpack.decodeHeaders (Bytes.Slice.ofByteArray s.headersBuf) st.decoderTable with
+      | .error e => throw (IO.userError e)
+      | .ok (hdrs, table) =>
+        r.conn.state.set { st with decoderTable := table }
+        r.headers.set (some hdrs)
+        return hdrs
+  match (← (r.conn.sock.recv? 65536).block) with
+  | none => throw (IO.userError "EOF")
+  | some chunk =>
+    let mut buf ← r.conn.readBuf.get
+    buf := Bytes.Pool.pushBytes buf chunk
+    let (frames, consumed) ← IO.ofExcept (H2.decodeFrames (Bytes.Slice.ofByteArray buf))
+    r.conn.readBuf.set (buf.extract consumed buf.size)
+    let mut st ← r.conn.state.get
+    for f in frames do
+      let (st', outs) ← IO.ofExcept (H2.handleFrame st f)
+      st := st'
+      H2.sendFrames r.conn.sock outs
+    r.conn.state.set st
+    ensureHeaders r (fuel - 1)
+
+/-- Receive next message, or `none` when remote half-closes (trailers available). -/
+partial def recv? (r : StreamReader) (fuel : Nat := 200) : IO (Option ByteArray) := do
+  if ← r.done.get then return none
+  discard <| ensureHeaders r
+  let pend ← r.pending.get
+  match decodeAvailable pend with
+  | .error e => throw (IO.userError e)
+  | .ok (msgs, rest) =>
+    if msgs.size > 0 then
+      r.pending.set rest
+      -- Return first; push remainder back by re-encoding... keep simple: only one at a time
+      let mut left := ByteArray.empty
+      for i in [1:msgs.size] do
+        left := Bytes.Pool.pushBytes left (Message.encodeId msgs[i]!)
+      r.pending.set (Bytes.Pool.pushBytes left rest)
+      return some msgs[0]!
+    let st ← r.conn.state.get
+    if let some s := st.getStream r.streamId then
+      -- Append any newly buffered DATA beyond what we already pending-tracked via stream dataBuf.
+      let fresh := s.dataBuf
+      if fresh.size > 0 && pend.size == 0 then
+        r.pending.set fresh
+        -- Clear consumed view by marking via pending only; connection keeps dataBuf.
+        return (← recv? r fuel)
+      if s.endStreamRemote then
+        if !s.trailersBuf.isEmpty then
+          match Hpack.decodeHeaders (Bytes.Slice.ofByteArray s.trailersBuf) st.decoderTable with
+          | .ok (t, table) =>
+            r.conn.state.set { st with decoderTable := table }
+            r.trailers.set (some t)
+          | .error _ => pure ()
+        else
+          r.trailers.set (some #[])
+        r.done.set true
+        return none
+    if fuel == 0 then throw (IO.userError "timeout waiting message")
+    match (← (r.conn.sock.recv? 65536).block) with
+    | none =>
+      r.done.set true
+      return none
+    | some chunk =>
+      let mut buf ← r.conn.readBuf.get
+      buf := Bytes.Pool.pushBytes buf chunk
+      let (frames, consumed) ← IO.ofExcept (H2.decodeFrames (Bytes.Slice.ofByteArray buf))
+      r.conn.readBuf.set (buf.extract consumed buf.size)
+      let mut st ← r.conn.state.get
+      for f in frames do
+        let (st', outs) ← IO.ofExcept (H2.handleFrame st f)
+        st := st'
+        H2.sendFrames r.conn.sock outs
+      r.conn.state.set st
+      if let some s := st.getStream r.streamId then
+        r.pending.set s.dataBuf
+      recv? r (fuel - 1)
+
+def getTrailers (r : StreamReader) : IO (Array Hpack.HeaderField) := do
+  discard <| recv? r  -- drain
+  return (← r.trailers.get).getD #[]
+
+end StreamReader
+
+/-- Open a client streaming call (headers sent, stream open for send/recv). -/
+def openCall (c : H2.ClientConn) (headers : Array Hpack.HeaderField) : IO ClientStream := do
+  let sid ← H2.Client.startRequest c headers ByteArray.empty false
+  let closed ← IO.mkRef false
+  let pending ← IO.mkRef ByteArray.empty
+  let hdrs ← IO.mkRef none
+  let tr ← IO.mkRef none
+  let done ← IO.mkRef false
+  return {
+    writer := { conn := c, streamId := sid, closed }
+    reader := { conn := c, streamId := sid, pending, headers := hdrs, trailers := tr, done }
+  }
+
+/-! # Server-side streaming handler types -/
+
+/-- Server streaming handler: one request → many response messages. -/
+abbrev ServerStreamHandler := ByteArray → IO (Array ByteArray × Status)
+
+/-- Client streaming handler: many requests → one response. -/
+abbrev ClientStreamHandler := Array ByteArray → IO (ByteArray × Status)
+
+/-- Bidi handler: many requests → many responses (buffered batch for now). -/
+abbrev BidiStreamHandler := Array ByteArray → IO (Array ByteArray × Status)
 
 structure Incoming where
   messages : Array ByteArray
@@ -34,50 +209,8 @@ def Outgoing.send (o : Outgoing) (msg : ByteArray) : IO Unit := do
 def Outgoing.close (o : Outgoing) : IO Unit :=
   o.closed.set true
 
-/-- Concatenate length-prefixed messages. -/
-def collectServerStream (msgs : Array ByteArray) : ByteArray :=
-  Id.run do
-    let mut out := ByteArray.empty
-    for m in msgs do
-      out := Bytes.Pool.pushBytes out m
-    return out
-
 def Outgoing.take (o : Outgoing) : IO ByteArray := do
   let msgs ← o.buf.modifyGet fun a => (a, #[])
   return collectServerStream msgs
-
-/-- Split a DATA buffer into complete gRPC messages; returns messages + remainder. -/
-def decodeAvailable (buf : ByteArray) : Except String (Array ByteArray × ByteArray) := do
-  let mut s := Bytes.Slice.ofByteArray buf
-  let mut out : Array ByteArray := #[]
-  while s.size ≥ 5 do
-    let len ← Bytes.BE.readU32 s 1 |>.elim (throw "len") pure
-    let total := 5 + len.toNat
-    if s.size < total then break
-    let (p, rest) ← Message.decodeOne s
-    out := out.push p
-    s := rest
-  return (out, s.toByteArray)
-
-/-- Server-streaming style: one request message → many response messages (buffered). -/
-structure ServerStreamCall where
-  request : ByteArray
-  responses : Array ByteArray
-  status : Status := {}
-  deriving Inhabited
-
-/-- Client-streaming style: many request messages → one response. -/
-structure ClientStreamCall where
-  requests : Array ByteArray
-  response : ByteArray
-  status : Status := {}
-  deriving Inhabited
-
-/-- Bidi: pairs of request batches to response batches (buffered end-to-end). -/
-structure BidiCall where
-  requests : Array ByteArray
-  responses : Array ByteArray
-  status : Status := {}
-  deriving Inhabited
 
 end Grpc.Stream

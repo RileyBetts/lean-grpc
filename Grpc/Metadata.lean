@@ -145,6 +145,33 @@ def teTrailers : Hpack.HeaderField := ⟨ascii "te", ascii "trailers"⟩
 def timeout (duration : String) : Hpack.HeaderField :=
   ⟨ascii "grpc-timeout", ascii duration⟩
 
+def grpcEncoding (name : String) : Hpack.HeaderField :=
+  ⟨ascii "grpc-encoding", ascii name⟩
+
+def grpcAcceptEncoding (names : String := "identity,gzip") : Hpack.HeaderField :=
+  ⟨ascii "grpc-accept-encoding", ascii names⟩
+
+/-- Parse gRPC timeout like `10S`, `100m`, `5M`, `1H`, `100u`, `100n` into milliseconds. -/
+def parseTimeoutMs (t : String) : Option Nat :=
+  if t.isEmpty then none
+  else
+    let chars := t.toList
+    match chars.reverse with
+    | [] => none
+    | unit :: restRev =>
+      let numStr := String.ofList restRev.reverse
+      match numStr.toNat? with
+      | none => none
+      | some n =>
+        match unit with
+        | 'H' => some (n * 3600 * 1000)
+        | 'M' => some (n * 60 * 1000)
+        | 'S' => some (n * 1000)
+        | 'm' => some n
+        | 'u' => some (if n == 0 then 0 else max 1 (n / 1000))
+        | 'n' => some 0
+        | _ => none
+
 def statusHeaders (st : Status) : Array Hpack.HeaderField :=
   let base := #[⟨ascii "grpc-status", ascii (toString st.code.toUInt32)⟩]
   if st.message.isEmpty then base

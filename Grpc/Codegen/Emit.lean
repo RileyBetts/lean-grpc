@@ -127,21 +127,58 @@ def emitFromProto (text : String) : IO String := do
       if !rpc.clientStreaming && !rpc.serverStreaming then
         out := out ++ s!"def {rpc.name} (self : {svc.name}Stub) (req : ByteArray) : IO Grpc.CallResult :=\n"
         out := out ++ s!"  Grpc.Channel.unary self.channel \"{full}\" \"{rpc.name}\" req\n\n"
+      else if !rpc.clientStreaming && rpc.serverStreaming then
+        out := out ++ s!"/-- Server-streaming `{rpc.name}`. -/\n"
+        out := out ++ s!"def {rpc.name} (self : {svc.name}Stub) (req : ByteArray) : IO (Array ByteArray × Grpc.Status) := do\n"
+        out := out ++ s!"  let stream ← Grpc.Channel.openStream self.channel \"{full}\" \"{rpc.name}\"\n"
+        out := out ++ "  Grpc.Stream.StreamWriter.send stream.writer req\n"
+        out := out ++ "  Grpc.Stream.StreamWriter.halfClose stream.writer\n"
+        out := out ++ "  let mut out : Array ByteArray := #[]\n"
+        out := out ++ "  while true do\n"
+        out := out ++ "    match ← Grpc.Stream.StreamReader.recv? stream.reader with\n"
+        out := out ++ "    | none => break\n"
+        out := out ++ "    | some m => out := out.push m\n"
+        out := out ++ "  return (out, Grpc.Status.ok)\n\n"
+      else if rpc.clientStreaming && !rpc.serverStreaming then
+        out := out ++ s!"/-- Client-streaming `{rpc.name}`. -/\n"
+        out := out ++ s!"def {rpc.name} (self : {svc.name}Stub) (reqs : Array ByteArray) : IO Grpc.CallResult := do\n"
+        out := out ++ s!"  let stream ← Grpc.Channel.openStream self.channel \"{full}\" \"{rpc.name}\"\n"
+        out := out ++ "  for req in reqs do\n"
+        out := out ++ "    Grpc.Stream.StreamWriter.send stream.writer req\n"
+        out := out ++ "  Grpc.Stream.StreamWriter.halfClose stream.writer\n"
+        out := out ++ "  let msg := (← Grpc.Stream.StreamReader.recv? stream.reader).getD ByteArray.empty\n"
+        out := out ++ "  return { status := .ok, message := msg, headers := #[], trailers := #[] }\n\n"
       else
-        let mode :=
-          if rpc.clientStreaming && rpc.serverStreaming then "bidi"
-          else if rpc.serverStreaming then "server-streaming"
-          else "client-streaming"
-        out := out ++ s!"/-- {mode} `{rpc.name}` — use `H2.Client` with length-prefixed messages;\n"
-        out := out ++ s!"    path `/{full}/{rpc.name}`. -/\n"
-        out := out ++ s!"def {rpc.name}Path : String := \"/{full}/{rpc.name}\"\n\n"
+        out := out ++ s!"/-- Bidi-streaming `{rpc.name}`. -/\n"
+        out := out ++ s!"def {rpc.name} (self : {svc.name}Stub) (reqs : Array ByteArray) : IO (Array ByteArray × Grpc.Status) := do\n"
+        out := out ++ s!"  let stream ← Grpc.Channel.openStream self.channel \"{full}\" \"{rpc.name}\"\n"
+        out := out ++ "  for req in reqs do\n"
+        out := out ++ "    Grpc.Stream.StreamWriter.send stream.writer req\n"
+        out := out ++ "  Grpc.Stream.StreamWriter.halfClose stream.writer\n"
+        out := out ++ "  let mut out : Array ByteArray := #[]\n"
+        out := out ++ "  while true do\n"
+        out := out ++ "    match ← Grpc.Stream.StreamReader.recv? stream.reader with\n"
+        out := out ++ "    | none => break\n"
+        out := out ++ "    | some m => out := out.push m\n"
+        out := out ++ "  return (out, Grpc.Status.ok)\n\n"
     out := out ++ s!"end {svc.name}Stub\n\n"
     let full := if pkg.isEmpty then svc.name else pkg ++ "." ++ svc.name
+    out := out ++ s!"/-- Register unary handlers for `{svc.name}`. -/\n"
     out := out ++ s!"def register{svc.name} (s : Grpc.Server) (handlers : Array (String × Grpc.UnaryHandler)) : Grpc.Server := Id.run do\n"
     out := out ++ "  let mut s := s\n"
     out := out ++ "  for (method, h) in handlers do\n"
     out := out ++ s!"    s := Grpc.Server.register s \"{full}\" method h\n"
     out := out ++ "  return s\n\n"
+    for rpc in svc.rpcs do
+      if !rpc.clientStreaming && rpc.serverStreaming then
+        out := out ++ s!"def register{rpc.name} (s : Grpc.Server) (h : Grpc.Stream.ServerStreamHandler) : Grpc.Server :=\n"
+        out := out ++ s!"  Grpc.Server.registerServerStream s \"{full}\" \"{rpc.name}\" h\n\n"
+      else if rpc.clientStreaming && !rpc.serverStreaming then
+        out := out ++ s!"def register{rpc.name} (s : Grpc.Server) (h : Grpc.Stream.ClientStreamHandler) : Grpc.Server :=\n"
+        out := out ++ s!"  Grpc.Server.registerClientStream s \"{full}\" \"{rpc.name}\" h\n\n"
+      else if rpc.clientStreaming && rpc.serverStreaming then
+        out := out ++ s!"def register{rpc.name} (s : Grpc.Server) (h : Grpc.Stream.BidiStreamHandler) : Grpc.Server :=\n"
+        out := out ++ s!"  Grpc.Server.registerBidi s \"{full}\" \"{rpc.name}\" h\n\n"
   if !pkg.isEmpty then
     out := out ++ "end\n"
   return out

@@ -56,32 +56,15 @@ partial def recvExact (sock : TCP.Socket.Client) (need : Nat) (acc : ByteArray :
   | none => throw (IO.userError "EOF")
   | some chunk => recvExact sock need (Bytes.Pool.pushBytes acc chunk)
 
-/-- Build response frames. If `headersAlreadySent`, only DATA (+ optional trailers). -/
-def responseFrames (streamId : UInt32) (headers : Array Hpack.HeaderField)
-    (body : ByteArray) (trailers : Array Hpack.HeaderField) (maxFrame : Nat)
-    (headersAlreadySent : Bool) (finished : Bool) : Array Frame :=
+/-- Build response HEADERS frames only; DATA is queued via `queueSend` for flow control. -/
+def responseHeaderFrames (streamId : UInt32) (headers : Array Hpack.HeaderField)
+    (bodyEmpty : Bool) (trailersEmpty : Bool) (headersAlreadySent : Bool) (finished : Bool) :
+    Array Frame :=
   Id.run do
-    let mut frames : Array Frame := #[]
-    if !headersAlreadySent then
-      if finished && trailers.isEmpty then
-        let endOnHeaders := body.size == 0
-        let hdrBlock := Hpack.encodeHeadersIndexed headers
-        frames := frames.push (Frame.headers streamId hdrBlock endOnHeaders true)
-        if body.size > 0 then
-          frames := frames ++ Frame.dataFragmented streamId body true maxFrame
-        return frames
-      else
-        let hdrBlock := Hpack.encodeHeadersIndexed headers
-        frames := frames.push (Frame.headers streamId hdrBlock false true)
-    if body.size > 0 then
-      frames := frames ++ Frame.dataFragmented streamId body (finished && trailers.isEmpty) maxFrame
-    if finished then
-      if !trailers.isEmpty then
-        let trBlock := Hpack.encodeHeadersIndexed trailers
-        frames := frames.push (Frame.headers streamId trBlock true true)
-      else if body.size == 0 && headersAlreadySent then
-        frames := frames.push (Frame.data streamId ByteArray.empty true)
-    return frames
+    if headersAlreadySent || headers.isEmpty then return #[]
+    let endOnHeaders := finished && bodyEmpty && trailersEmpty
+    let hdrBlock := Hpack.encodeHeadersIndexed headers
+    return #[Frame.headers streamId hdrBlock endOnHeaders true]
 
 /-- Drain buffered reads into frames and handle them. -/
 partial def processBuffer (sock : TCP.Socket.Client) (st : ConnState) (buf : ByteArray)
@@ -107,19 +90,34 @@ partial def processBuffer (sock : TCP.Socket.Client) (st : ConnState) (buf : Byt
             let emitFrames := !resp.headers.isEmpty || resp.body.size > 0 ||
               (resp.finished && (s.responseHeadersSent || !resp.headers.isEmpty || !resp.trailers.isEmpty))
             if emitFrames then
-              replies := replies ++ responseFrames s.id resp.headers resp.body resp.trailers
-                st.ourSettings.maxFrameSize.toNat s.responseHeadersSent resp.finished
-            let headersNowSent := s.responseHeadersSent || !resp.headers.isEmpty
-            -- Only advance the data cursor when the handler consumed bytes or finished.
-            let advanced := resp.finished || resp.body.size > 0 || !resp.headers.isEmpty
-            let s := { s with
-              dataConsumed := if advanced then s.dataBuf.size else s.dataConsumed
-              responseHeadersSent := headersNowSent
-              state := if resp.finished then .closed else s.state
-              headersBuf := if resp.finished then ByteArray.empty else s.headersBuf
-              dataBuf := if resp.finished then ByteArray.empty else s.dataBuf
-              trailersBuf := if resp.finished then ByteArray.empty else s.trailersBuf }
-            st := st.upsertStream s
+              replies := replies ++ responseHeaderFrames s.id resp.headers
+                (resp.body.size == 0) resp.trailers.isEmpty s.responseHeadersSent resp.finished
+              let headersNowSent := s.responseHeadersSent || !resp.headers.isEmpty
+              let endOnHeaders := resp.finished && resp.body.size == 0 && resp.trailers.isEmpty
+                && !s.responseHeadersSent && !resp.headers.isEmpty
+              let s := { s with
+                dataConsumed := s.dataBuf.size
+                responseHeadersSent := headersNowSent
+                headersBuf := if resp.finished then ByteArray.empty else s.headersBuf
+                dataBuf := if resp.finished then ByteArray.empty else s.dataBuf
+                trailersBuf := if resp.finished then ByteArray.empty else s.trailersBuf }
+              st := st.upsertStream s
+              if !endOnHeaders && (resp.body.size > 0 || !resp.trailers.isEmpty ||
+                  (resp.finished && headersNowSent)) then
+                let (st', dataFrames) := queueSend st s.id resp.body resp.trailers resp.finished
+                st := st'
+                replies := replies ++ dataFrames
+            else
+              -- Only advance the data cursor when the handler consumed bytes or finished.
+              let advanced := resp.finished || resp.body.size > 0 || !resp.headers.isEmpty
+              let s := { s with
+                dataConsumed := if advanced then s.dataBuf.size else s.dataConsumed
+                responseHeadersSent := s.responseHeadersSent || !resp.headers.isEmpty
+                state := if resp.finished then .closed else s.state
+                headersBuf := if resp.finished then ByteArray.empty else s.headersBuf
+                dataBuf := if resp.finished then ByteArray.empty else s.dataBuf
+                trailersBuf := if resp.finished then ByteArray.empty else s.trailersBuf }
+              st := st.upsertStream s
   sendFrames sock replies
   let rest := buf.extract consumed buf.size
   return (st, rest)

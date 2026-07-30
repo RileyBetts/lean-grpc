@@ -25,6 +25,20 @@ def main : IO Unit := do
     let r ← IO.ofExcept (Proto.HelloRequest.decode p)
     if r.name != "gz" then throw (IO.userError "gzip name")
 
+  -- peer-compatible gzip via system gzip (deflate)
+  let peerMsg ← Grpc.Message.encodeIO raw .gzip
+  match ← Grpc.Message.decodeOneIO (Bytes.Slice.ofByteArray peerMsg) with
+  | .error e => throw (IO.userError e)
+  | .ok (p, _) =>
+    let r ← IO.ofExcept (Proto.HelloRequest.decode p)
+    if r.name != "gz" then throw (IO.userError "peer gzip name")
+  -- peer inflate of stored gzip still works
+  match ← Grpc.Message.decodeOneIO (Bytes.Slice.ofByteArray gzMsg) with
+  | .error e => throw (IO.userError e)
+  | .ok (p, _) =>
+    let r ← IO.ofExcept (Proto.HelloRequest.decode p)
+    if r.name != "gz" then throw (IO.userError "stored via peer path")
+
   -- percent encode/decode
   let enc := Grpc.Metadata.percentEncode "hello world/x"
   if !enc.contains '%' then throw (IO.userError s!"pct enc {enc}")
@@ -38,10 +52,10 @@ def main : IO Unit := do
   if back != bin then throw (IO.userError "b64")
 
   -- timeout parse
-  match Grpc.Server.parseTimeoutMs "10S" with
+  match Grpc.Metadata.parseTimeoutMs "10S" with
   | some 10000 => pure ()
   | _ => throw (IO.userError "timeout S")
-  match Grpc.Server.parseTimeoutMs "1n" with
+  match Grpc.Metadata.parseTimeoutMs "1n" with
   | some 0 => pure ()
   | _ => throw (IO.userError "timeout n")
 

@@ -8,6 +8,7 @@ import Hpack
 import Grpc.Status
 import Grpc.Message
 import Grpc.Metadata
+import Grpc.Compression
 
 namespace Grpc
 
@@ -49,21 +50,25 @@ private def statusFromHeaders (headers trailers : Array Hpack.HeaderField) : Sta
     return ⟨code, msg⟩
 
 def unaryCall (c : H2.ClientConn) (service method : String) (authority : String)
-    (request : ByteArray) (extraHeaders : Array Hpack.HeaderField := #[]) : IO CallResult := do
-  let headers : Array Hpack.HeaderField :=
+    (request : ByteArray) (extraHeaders : Array Hpack.HeaderField := #[])
+    (compress : Compression.Algorithm := .identity) : IO CallResult := do
+  let mut headers : Array Hpack.HeaderField :=
     #[
       Metadata.methodPost,
       Metadata.schemeHttp,
       ⟨Metadata.ascii ":authority", Metadata.ascii authority⟩,
       Metadata.path service method,
       Metadata.contentTypeGrpc,
-      Metadata.teTrailers
+      Metadata.teTrailers,
+      Metadata.grpcAcceptEncoding "identity,gzip"
     ] ++ extraHeaders
-  let body := Message.encodeId request
+  if compress != .identity then
+    headers := headers.push (Metadata.grpcEncoding compress.name)
+  let body ← Message.encodeIO request compress
   let resp ← H2.Client.unary c headers body
   let status := statusFromHeaders resp.headers resp.trailers
   let payloads ←
-    match Message.decodeAll (Bytes.Slice.ofByteArray resp.data) with
+    match ← Message.decodeAllIO (Bytes.Slice.ofByteArray resp.data) with
     | .ok ps => pure ps
     | .error _ => pure #[]
   let message := payloads.getD 0 ByteArray.empty

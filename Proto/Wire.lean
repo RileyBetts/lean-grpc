@@ -122,5 +122,66 @@ def fieldBytes? (fields : Array Field) (n : Nat) : Option ByteArray :=
         return some f.payload
     return none
 
+private def decodePackedUInt32 (payload : ByteArray) : Array UInt32 :=
+  Id.run do
+    let s := Bytes.Slice.ofByteArray payload
+    let mut pos : Nat := 0
+    let mut out : Array UInt32 := #[]
+    while pos < s.size do
+      match decodeVarint s pos with
+      | .error _ => break
+      | .ok (v, pos2) =>
+        out := out.push v.toUInt32
+        pos := pos2
+    return out
+
+/-- All varint values for a repeated field (unpacked + packed). -/
+def fieldUInt32s (fields : Array Field) (n : Nat) : Array UInt32 :=
+  Id.run do
+    let mut out : Array UInt32 := #[]
+    for f in fields do
+      if f.number == n && f.wireType == .varint then
+        match decodeVarint (Bytes.Slice.ofByteArray f.payload) 0 with
+        | .ok (v, _) => out := out.push v.toUInt32
+        | .error _ => pure ()
+      else if f.number == n && f.wireType == .lengthDelimited then
+        out := out ++ decodePackedUInt32 f.payload
+    return out
+
+/-- All length-delimited payloads for a repeated field. -/
+def fieldBytesMany (fields : Array Field) (n : Nat) : Array ByteArray :=
+  Id.run do
+    let mut out : Array ByteArray := #[]
+    for f in fields do
+      if f.number == n && f.wireType == .lengthDelimited then
+        out := out.push f.payload
+    return out
+
+def encodeEnum (acc : ByteArray) (field : Nat) (v : UInt32) : ByteArray :=
+  encodeUInt32 acc field v
+
+/-- Packed repeated varints. -/
+def encodePackedUInt32 (acc : ByteArray) (field : Nat) (vs : Array UInt32) : ByteArray :=
+  if vs.isEmpty then acc
+  else
+    let inner := Id.run do
+      let mut inner := ByteArray.empty
+      for v in vs do
+        inner := encodeVarint inner v.toUInt64
+      return inner
+    encodeBytes acc field inner
+
+/-- Unpacked repeated varints. -/
+def encodeRepeatedUInt32 (acc : ByteArray) (field : Nat) (vs : Array UInt32) : ByteArray :=
+  Id.run do
+    let mut out := acc
+    for v in vs do
+      out := encodeUInt32 out field v
+    return out
+
+/-- Nested message as length-delimited bytes. -/
+def encodeMessage (acc : ByteArray) (field : Nat) (msg : ByteArray) : ByteArray :=
+  if msg.isEmpty then acc else encodeBytes acc field msg
+
 end Wire
 end Proto

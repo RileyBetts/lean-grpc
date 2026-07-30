@@ -41,8 +41,17 @@ def main : IO Unit := do
           let (n, v) := headerAscii h
           if n == ":path" then return v
         return ""
+    let acceptEnc :=
+      Id.run do
+        for h in headers do
+          let (n, v) := headerAscii h
+          if n == "grpc-accept-encoding" then return v
+        return "identity"
+    let respAlg := Grpc.Compression.negotiate acceptEnc
     let (initialMd, trailingBin) := echoMd headers
-    let respHeaders := Grpc.Metadata.http200 ++ initialMd
+    let mut respHeaders := Grpc.Metadata.http200 ++ initialMd
+    if respAlg != .identity then
+      respHeaders := respHeaders.push (Grpc.Metadata.grpcEncoding respAlg.name)
     let addTrailing (st : Grpc.Status) : Array Hpack.HeaderField :=
       let base := Grpc.Metadata.statusHeaders st
       match trailingBin with
@@ -60,7 +69,10 @@ def main : IO Unit := do
       }
     | "/grpc.testing.TestService/UnaryCall" =>
       if !endStream then return { finished := false }
-      let payloads ← IO.ofExcept (Grpc.Message.decodeAll (Bytes.Slice.ofByteArray data))
+      let payloads ←
+        match ← Grpc.Message.decodeAllIO (Bytes.Slice.ofByteArray data) with
+        | .ok ps => pure ps
+        | .error e => throw (IO.userError e)
       let req ← IO.ofExcept (Proto.SimpleRequest.decode (payloads.getD 0 ByteArray.empty))
       if let some st := req.responseStatus then
         let code := Grpc.StatusCode.ofUInt32 st.code
@@ -76,7 +88,7 @@ def main : IO Unit := do
       }
       return {
         headers := respHeaders
-        body := Grpc.Message.encodeId resp
+        body := ← Grpc.Message.encodeIO resp respAlg
         trailers := addTrailing .ok
         finished := true
       }

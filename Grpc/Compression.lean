@@ -17,6 +17,11 @@ def Algorithm.name : Algorithm → String
   | .identity => "identity"
   | .gzip => "gzip"
 
+def Algorithm.parse? : String → Option Algorithm
+  | "identity" => some .identity
+  | "gzip" => some .gzip
+  | _ => none
+
 /-- CRC32 (ISO HDLC / gzip) for gzip footer. -/
 private def crc32Table : Array UInt32 := Id.run do
   let mut t : Array UInt32 := Array.replicate 256 0
@@ -39,19 +44,16 @@ def crc32 (data : ByteArray) : UInt32 :=
       c := crc32Table[idx]! ^^^ (c >>> 8)
     return c ^^^ 0xffffffff
 
-/-- Minimal gzip wrapper using a single stored (uncompressed) DEFLATE block.
-    Peers with real inflate can decompress this; useful for interop without a full deflate. -/
-def gzipEncode (payload : ByteArray) : ByteArray :=
+/-- Stored-deflate gzip (self-tests / peers that accept stored blocks). -/
+def gzipEncodeStored (payload : ByteArray) : ByteArray :=
   Id.run do
     let mut out := ByteArray.empty
-    -- gzip header: ID1 ID2 CM FLG MTIME(4) XFL OS
     out := Bytes.Pool.pushBytes out (ByteArray.mk #[0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff])
-    -- Stored DEFLATE blocks (BTYPE=00); multiple blocks if > 65535.
     let mut off := 0
     while off < payload.size || (off == 0 && payload.size == 0) do
       let take := min 65535 (payload.size - off)
       let last := off + take ≥ payload.size
-      let hdr : UInt8 := if last then 0x01 else 0x00  -- BFINAL + BTYPE=00
+      let hdr : UInt8 := if last then 0x01 else 0x00
       out := out.push hdr
       let l := take
       let nl := 65535 - l
@@ -67,7 +69,6 @@ def gzipEncode (payload : ByteArray) : ByteArray :=
     out := Bytes.Pool.pushBytes out (Bytes.BE.u32BytesLE payload.size.toUInt32)
     return out
 
-/-- Decode gzip that uses only stored DEFLATE blocks (as produced by `gzipEncode`). -/
 def gzipDecodeStored (data : ByteArray) : Except String ByteArray := do
   if data.size < 18 then throw "short gzip"
   if data.get! 0 != 0x1f || data.get! 1 != 0x8b then throw "bad gzip magic"
@@ -97,14 +98,81 @@ def gzipDecodeStored (data : ByteArray) : Except String ByteArray := do
   if expectCrc != got then throw "crc mismatch"
   return out
 
+/-- Peer-compatible gzip via system `gzip` (real deflate). Falls back to stored encode. -/
+def gzipEncodePeer (payload : ByteArray) : IO ByteArray := do
+  try
+    let child ← IO.Process.spawn {
+      cmd := "gzip"
+      args := #["-c", "-n"]
+      stdin := .piped
+      stdout := .piped
+      stderr := .piped
+    }
+    let (stdin, child) ← child.takeStdin
+    stdin.write payload
+    stdin.flush
+    let stdout ← IO.asTask (child.stdout.readBinToEnd) Task.Priority.dedicated
+    let _ ← child.stderr.readBinToEnd
+    let code ← child.wait
+    let out ← IO.ofExcept stdout.get
+    if code != 0 || (out.isEmpty && !payload.isEmpty) then
+      return gzipEncodeStored payload
+    return out
+  catch _ =>
+    return gzipEncodeStored payload
+
+/-- Peer-compatible gunzip via system `gzip -dc`; falls back to stored decoder. -/
+def gzipDecodePeer (data : ByteArray) : IO (Except String ByteArray) := do
+  try
+    let child ← IO.Process.spawn {
+      cmd := "gzip"
+      args := #["-dc"]
+      stdin := .piped
+      stdout := .piped
+      stderr := .piped
+    }
+    let (stdin, child) ← child.takeStdin
+    stdin.write data
+    stdin.flush
+    let stdout ← IO.asTask (child.stdout.readBinToEnd) Task.Priority.dedicated
+    let _ ← child.stderr.readBinToEnd
+    let code ← child.wait
+    let out ← IO.ofExcept stdout.get
+    if code != 0 then
+      return gzipDecodeStored data
+    return .ok out
+  catch _ =>
+    return gzipDecodeStored data
+
 def compress (alg : Algorithm) (payload : ByteArray) : Except String ByteArray :=
   match alg with
   | .identity => .ok payload
-  | .gzip => .ok (gzipEncode payload)
+  | .gzip => .ok (gzipEncodeStored payload)
 
 def decompress (alg : Algorithm) (payload : ByteArray) : Except String ByteArray :=
   match alg with
   | .identity => .ok payload
   | .gzip => gzipDecodeStored payload
+
+/-- IO variants that prefer peer-compatible gzip. -/
+def compressIO (alg : Algorithm) (payload : ByteArray) : IO ByteArray := do
+  match alg with
+  | .identity => pure payload
+  | .gzip => gzipEncodePeer payload
+
+def decompressIO (alg : Algorithm) (payload : ByteArray) : IO (Except String ByteArray) := do
+  match alg with
+  | .identity => pure (.ok payload)
+  | .gzip => gzipDecodePeer payload
+
+private def trimAsciiSpaces (s : String) : String :=
+  let cs := s.toList.dropWhile (fun c => c == ' ' || c == '\t')
+  let cs := (cs.reverse.dropWhile (fun c => c == ' ' || c == '\t')).reverse
+  String.ofList cs
+
+/-- Prefer gzip when advertised; otherwise identity. -/
+def negotiate (acceptEncoding : String) : Algorithm :=
+  if acceptEncoding.splitOn "," |>.any (fun s => trimAsciiSpaces s == "gzip") then .gzip
+  else .identity
 
 end Grpc.Compression
