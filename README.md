@@ -1,6 +1,10 @@
-# Pure Lean 4 gRPC Stack
+# lean-grpc
 
-General-purpose **pure Lean** gRPC implementation: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
+General-purpose **pure Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
+
+Standalone project (not part of Anchor Chain). Once the library is well tested, consumers such as Anchor can depend on it via Lake.
+
+**Libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (plus examples/tests).
 
 ## Status
 
