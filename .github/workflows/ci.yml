@@ -13,7 +13,7 @@ jobs:
         with:
           test: false
       - name: Build libraries and tests
-        run: lake build bytesTests hpackTests h2Tests grpcTests trailersServer trailersLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary h2specServer routeGuideServer routeGuideClient
+        run: lake build bytesTests hpackTests h2Tests grpcTests trailersServer trailersLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary benchSoak h2specServer routeGuideServer routeGuideClient
       - name: Unit tests
         run: |
           ./.lake/build/bin/bytesTests
@@ -27,22 +27,36 @@ jobs:
           LEAN_GRPC_OUT=/tmp/lean-grpc-gen ./.lake/build/bin/protoc-gen-lean4-grpc examples/helloworld.proto
           LEAN_GRPC_OUT=/tmp/lean-grpc-gen ./.lake/build/bin/protoc-gen-lean4-grpc examples/route_guide.proto
           test -f /tmp/lean-grpc-gen/Generated.lean
+          grep -q SayHelloRequest /tmp/lean-grpc-gen/Generated.lean
+      - name: Native zlib + TLS proxy
+        run: |
+          chmod +x scripts/build_native.sh scripts/gen-test-certs.sh scripts/interop-tls-go-lean.sh
+          ./scripts/build_native.sh
+          export LEAN_GRPC_ZLIB_HELPER="$PWD/.lake/build/native/zlib_helper"
+          ./.lake/build/bin/grpcTests
       - name: Lean↔Lean interop cases
         run: |
           ./.lake/build/bin/interopServer &
           pid=$!
           sleep 1
           for c in empty_unary large_unary status_code_and_message custom_metadata cancel_after_begin \
-                   server_streaming client_streaming ping_pong empty_stream; do
+                   server_streaming client_streaming ping_pong empty_stream \
+                   cancel_after_first_response special_status_message unimplemented_method \
+                   unimplemented_service timeout_on_sleeping_server client_compressed_unary \
+                   server_compressed_unary client_compressed_streaming server_compressed_streaming \
+                   pick_first_unary; do
             ./.lake/build/bin/interopClient 127.0.0.1 10000 "$c"
           done
           kill $pid
-      - name: Helloworld + RouteGuide smoke
+      - name: TLS ALPN proxy smoke
+        run: ./scripts/interop-tls-go-lean.sh
+      - name: Helloworld + RouteGuide + soak
         run: |
           ./.lake/build/bin/helloworldServer &
           pid=$!
           sleep 0.5
           ./.lake/build/bin/helloworldClient 127.0.0.1 50051 World
+          ./.lake/build/bin/benchSoak 127.0.0.1 50051 30
           kill $pid
           ./.lake/build/bin/routeGuideServer &
           pid=$!
@@ -88,16 +102,14 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           test: false
-      - name: h2spec core (hard gate)
+      - name: h2spec full (hard gate)
         run: |
           chmod +x scripts/h2spec.sh
           ./scripts/h2spec.sh
-      - name: Upload h2spec logs
+      - name: Upload h2spec log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: h2spec-log
-          path: |
-            /tmp/lean-grpc-h2spec-core.txt
-            /tmp/lean-grpc-h2spec.txt
+          path: /tmp/lean-grpc-h2spec.txt
           if-no-files-found: ignore

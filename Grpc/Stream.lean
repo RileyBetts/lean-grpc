@@ -45,6 +45,8 @@ structure StreamReader where
   conn : H2.ClientConn
   streamId : UInt32
   pending : IO.Ref ByteArray
+  /-- Bytes of connection `dataBuf` already copied into `pending`. -/
+  dataSeen : IO.Ref Nat
   headers : IO.Ref (Option (Array Hpack.HeaderField))
   trailers : IO.Ref (Option (Array Hpack.HeaderField))
   done : IO.Ref Bool
@@ -83,21 +85,18 @@ partial def ensureHeaders (r : StreamReader) (fuel : Nat := 200) : IO (Array Hpa
   | none => pure ()
   | some s =>
     if s.endHeaders then
-      let st ← r.conn.state.get
-      match Hpack.decodeHeaders (Bytes.Slice.ofByteArray s.headersBuf) st.decoderTable with
-      | .error e => throw (IO.userError e)
-      | .ok (hdrs, table) =>
-        r.conn.state.set { st with decoderTable := table }
-        r.headers.set (some hdrs)
-        return hdrs
+      r.headers.set (some s.requestHeaders)
+      return s.requestHeaders
   match (← (r.conn.sock.recv? 65536).block) with
   | none => throw (IO.userError "EOF")
   | some chunk =>
     let mut buf ← r.conn.readBuf.get
     buf := Bytes.Pool.pushBytes buf chunk
-    let (frames, consumed) ← IO.ofExcept (H2.decodeFrames (Bytes.Slice.ofByteArray buf))
+    let st0 ← r.conn.state.get
+    let (frames, consumed) ← IO.ofExcept
+      (H2.decodeFrames (Bytes.Slice.ofByteArray buf) st0.ourSettings.maxFrameSize.toNat)
     r.conn.readBuf.set (buf.extract consumed buf.size)
-    let mut st ← r.conn.state.get
+    let mut st := st0
     for f in frames do
       let (st', outs) ← IO.ofExcept (H2.handleFrame st f)
       st := st'
@@ -123,21 +122,14 @@ partial def recv? (r : StreamReader) (fuel : Nat := 200) : IO (Option ByteArray)
       return some msgs[0]!
     let st ← r.conn.state.get
     if let some s := st.getStream r.streamId then
-      -- Append any newly buffered DATA beyond what we already pending-tracked via stream dataBuf.
-      let fresh := s.dataBuf
-      if fresh.size > 0 && pend.size == 0 then
-        r.pending.set fresh
-        -- Clear consumed view by marking via pending only; connection keeps dataBuf.
+      let seen ← r.dataSeen.get
+      if s.dataBuf.size > seen then
+        let fresh := s.dataBuf.extract seen s.dataBuf.size
+        r.pending.set (Bytes.Pool.pushBytes pend fresh)
+        r.dataSeen.set s.dataBuf.size
         return (← recv? r fuel)
       if s.endStreamRemote then
-        if !s.trailersBuf.isEmpty then
-          match Hpack.decodeHeaders (Bytes.Slice.ofByteArray s.trailersBuf) st.decoderTable with
-          | .ok (t, table) =>
-            r.conn.state.set { st with decoderTable := table }
-            r.trailers.set (some t)
-          | .error _ => pure ()
-        else
-          r.trailers.set (some #[])
+        r.trailers.set (some s.decodedTrailers)
         r.done.set true
         return none
     if fuel == 0 then throw (IO.userError "timeout waiting message")
@@ -148,16 +140,16 @@ partial def recv? (r : StreamReader) (fuel : Nat := 200) : IO (Option ByteArray)
     | some chunk =>
       let mut buf ← r.conn.readBuf.get
       buf := Bytes.Pool.pushBytes buf chunk
-      let (frames, consumed) ← IO.ofExcept (H2.decodeFrames (Bytes.Slice.ofByteArray buf))
+      let st0 ← r.conn.state.get
+      let (frames, consumed) ← IO.ofExcept
+        (H2.decodeFrames (Bytes.Slice.ofByteArray buf) st0.ourSettings.maxFrameSize.toNat)
       r.conn.readBuf.set (buf.extract consumed buf.size)
-      let mut st ← r.conn.state.get
+      let mut st := st0
       for f in frames do
         let (st', outs) ← IO.ofExcept (H2.handleFrame st f)
         st := st'
         H2.sendFrames r.conn.sock outs
       r.conn.state.set st
-      if let some s := st.getStream r.streamId then
-        r.pending.set s.dataBuf
       recv? r (fuel - 1)
 
 def getTrailers (r : StreamReader) : IO (Array Hpack.HeaderField) := do
@@ -171,12 +163,13 @@ def openCall (c : H2.ClientConn) (headers : Array Hpack.HeaderField) : IO Client
   let sid ← H2.Client.startRequest c headers ByteArray.empty false
   let closed ← IO.mkRef false
   let pending ← IO.mkRef ByteArray.empty
+  let dataSeen ← IO.mkRef 0
   let hdrs ← IO.mkRef none
   let tr ← IO.mkRef none
   let done ← IO.mkRef false
   return {
     writer := { conn := c, streamId := sid, closed }
-    reader := { conn := c, streamId := sid, pending, headers := hdrs, trailers := tr, done }
+    reader := { conn := c, streamId := sid, pending, dataSeen, headers := hdrs, trailers := tr, done }
   }
 
 /-! # Server-side streaming handler types -/

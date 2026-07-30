@@ -38,5 +38,8 @@ def Status.resourceExhausted (msg : String) : Status := ⟨.resourceExhausted, m
 def Status.cancelled (msg : String := "") : Status := ⟨.cancelled, msg⟩
 def Status.deadlineExceeded (msg : String := "deadline exceeded") : Status :=
   ⟨.deadlineExceeded, msg⟩
+def Status.unavailable (msg : String := "") : Status := ⟨.unavailable, msg⟩
+def Status.invalidArgument (msg : String := "") : Status := ⟨.invalidArgument, msg⟩
 
 end Grpc
+

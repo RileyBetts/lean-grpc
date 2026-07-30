@@ -133,17 +133,17 @@ private def matchPrefix (acc : UInt32) (nbits : Nat) : Match :=
         return .sym sym
     return .none
 
-/-- Decode Huffman-coded bytes to raw octets. -/
+/-- Decode Huffman-coded bytes to raw octets.
+    Padding must be ≤7 bits of 1s; a complete EOS symbol is a compression error. -/
 def decode (input : Bytes.Slice) : Except Error ByteArray := do
   if input.isEmpty then return ByteArray.empty
   let mut r : BitReader := ⟨input, 0⟩
   let mut out : ByteArray := ByteArray.empty
   let mut acc : UInt32 := 0
   let mut nbits : Nat := 0
-  let mut done := false
-  while !done && r.remainingBits > 0 do
+  while r.remainingBits > 0 do
     match r.readBit with
-    | none => done := true
+    | none => break
     | some (r', bit) =>
       r := r'
       acc := (acc <<< 1) ||| (if bit then 1 else 0)
@@ -155,16 +155,15 @@ def decode (input : Bytes.Slice) : Except Error ByteArray := do
           acc := 0
           nbits := 0
         | .eos =>
-          done := true
-          acc := 0
-          nbits := 0
+          -- Complete EOS in the bitstream is invalid (padding is incomplete only).
+          throw Error.eos
         | .none =>
           if nbits > 30 then throw Error.invalid
-  -- Accept leftover EOS/padding bits of 1s (≤7)
+  -- Leftover bits are padding: must be all 1s and at most 7 bits.
+  if nbits > 7 then throw Error.invalid
   if nbits > 0 then
     let padMask : UInt32 := (1 <<< nbits.toUInt32) - 1
-    if (acc &&& padMask) != padMask then
-      if nbits > 7 then throw Error.invalid
+    if (acc &&& padMask) != padMask then throw Error.invalid
   return out
 
 /-- Look up Huffman code for a symbol (0..255). -/
@@ -191,7 +190,7 @@ def encode (input : Bytes.Slice) : ByteArray :=
       | none => return input.toByteArray
       | some (code, len) =>
         bits := pushCode bits code len
-    bits := pushCode bits 0x3fffffff 30
+    -- Pad to a byte boundary with ≤7 bits of 1s (EOS prefix), not a full EOS symbol.
     while bits.size % 8 != 0 do
       bits := bits.push true
     let mut out := ByteArray.empty

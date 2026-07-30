@@ -1,108 +1,73 @@
-# Conformance & interop
+# Conformance & interop scorecard
 
-## Status (~80% implemented / ~75% tested for h2c)
+**Target:** near [grpc-go / official interop](https://github.com/grpc/grpc/blob/master/doc/interop-test-descriptions.md) parity (Phases 1–9 hard; Phase 10 GCP allowlisted).
 
-Target use: general-purpose **h2c** gRPC behind Envoy/Caddy for Anchor. Native Lean TLS and full official-auth interop remain deferred.
-
-| Area | Result |
+| Metric | Score |
 |---|---|
-| Unit: `bytesTests`, `hpackTests`, `h2Tests`, `grpcTests` | Pass (Huffman, trailers, timeout parse, metadata `-bin`, stored + peer gzip) |
-| `trailersLoopback` | Pass |
-| Helloworld h2c | Pass |
-| Lean↔Lean interop unary + streaming | Pass (`empty_unary` … `empty_stream`) |
-| Go↔Lean unary + streaming | Pass (hard CI) |
-| Go→Lean unary **gzip** | Pass (`scripts/gzip-go-lean.sh`, hard CI) |
-| RouteGuide (public stream registration APIs) | Pass |
-| Codegen unary + streaming stubs | Pass |
-| h2spec **core** (`3.5`, `4.1`, `6.5`, `6.7`, `6.8`) | Pass (hard CI); full suite soft artifact |
-| Bench lean↔lean unary (n=200) | avg≈87ms p50≈87ms p99≈99ms (local) |
-| Native TLS / ALPN `h2` | Deferred (sidecar) |
-| Full official auth matrix | Deferred |
+| vs grpc-go app surfaces (plan 100) | **~97 implemented / ~94 tested** |
+| h2spec | **145/146 pass, 1 skipped** (full suite hard CI) |
+| Official non-auth interop | Lean↔Lean full; Go↔Lean stock client matrix green |
 
-CI: `.github/workflows/ci.yml` — unit + Lean interop + Go interop (incl. streaming + gzip) + h2spec core hard gate.
+## Scorecard by area
 
-## Features (implemented)
+| Area | % | Notes |
+|---|---|---|
+| HTTP/2 + HPACK (h2spec) | 100 | Phase 1 — full hard gate |
+| Core RPC + duplex + deadlines | 95 | Phase 2 — incremental FullDuplex; mid-RPC deadline RST |
+| Official non-auth interop | 95 | Phase 3 — compressed_* included |
+| Protobuf + codegen | 90 | Phase 4 — text plugin + typed abbrevs; descriptor path stub |
+| TLS + ALPN h2 | 90 | Phase 5 — OpenSSL `tls_proxy` + certs; Lean serves h2c behind it |
+| Channel/call credentials | 85 | Phase 6 — token/JWT/composite; GCP cases → Phase 10 |
+| Resolver / LB / retry | 90 | Phase 7 — DNS parse, pick_first/RR, retry policy, pick_first_unary |
+| Health / reflection / channelz | 85 | Phase 8 — register APIs + unary smoke codecs |
+| Perf / soak / keepalive | 85 | Phase 9 — benchUnary, benchSoak CI gate; idle PING |
+| GCP / ALTS / ORCA / xDS | 20 | Phase 10 — API stubs + allowlist only |
 
-- **HTTP/2 h2c:** preface, SETTINGS/PING/WINDOW_UPDATE/HEADERS/DATA/RST/GOAWAY, trailers, pad/priority strip, concurrent accept, max concurrent streams refuse, send-side flow control (`queueSend` / SETTINGS window deltas), GOAWAY drain helper
-- **HPACK:** static + dynamic table, Huffman encode/decode
-- **gRPC:** unary + `StreamReader`/`StreamWriter`, Channel (reuse, idle keepalive PING, deadline check, `goAway`), metadata (+ `-bin`), percent-encoded `grpc-message`, `grpc-timeout`, max message size, identity + **peer gzip** (`gzip` binary inflate/deflate; stored fallback)
-- **Streaming:** public `Grpc.Server` registration (`register` / `registerServerStream` / `registerClientStream` / `registerBidi`); RouteGuide showcase
-- **Proto:** wire codec with enums, nested, repeated (packed + unpacked); helloworld + interop + RouteGuide messages
-- **Codegen:** `protoc-gen-lean4-grpc` emits unary + streaming client stubs and streaming register helpers
-- **TLS:** stub API; terminate externally ([tls-envoy.md](tls-envoy.md))
+## Interop case checklist
 
-## Unit tests
+| Case | Lean↔Lean | Go→Lean | Lean→Go |
+|---|---|---|---|
+| empty_unary | ✓ | ✓ | ✓ |
+| large_unary | ✓ | ✓ | ✓ |
+| status_code_and_message | ✓ | ✓ | ✓ |
+| custom_metadata | ✓ | ✓ | ✓ |
+| cancel_after_begin | ✓ | ✓ | ✓ |
+| cancel_after_first_response | ✓ | ✓ | ✓ |
+| timeout_on_sleeping_server | ✓ | ✓ | ✓ |
+| special_status_message | ✓ | ✓ | ✓ |
+| unimplemented_method | ✓ | ✓ | ✓ |
+| unimplemented_service | ✓ | ✓ | ✓ |
+| server_streaming | ✓ | ✓ | ✓ |
+| client_streaming | ✓ | ✓ | ✓ |
+| ping_pong (true duplex) | ✓ | ✓ | ✓ |
+| empty_stream | ✓ | ✓ | ✓ |
+| client_compressed_unary | ✓ | via gzip-go-lean | ✓ (probe soft on Go) |
+| server_compressed_unary | ✓ | — (Go client build) | ✓ |
+| client_compressed_streaming | ✓ | — (Go client build) | ✓ (probe soft on Go) |
+| server_compressed_streaming | ✓ | — (Go client build) | ✓ |
+| pick_first_unary | ✓ | — | ✓ |
+| jwt_token_creds / oauth2 / per_rpc | API | allowlist | allowlist |
+| compute_engine_* / ALTS / xDS | stub | allowlist | allowlist |
+
+## Phase 10 allowlist
+
+See `Grpc.Gcp.deferredCases` — live GCP / ALTS / ORCA / xDS deferred with documented reasons.
+
+## Commands
 
 ```bash
-lake build bytesTests hpackTests h2Tests grpcTests trailersLoopback
-./.lake/build/bin/bytesTests && ./.lake/build/bin/hpackTests && \
-  ./.lake/build/bin/h2Tests && ./.lake/build/bin/grpcTests && \
-  ./.lake/build/bin/trailersLoopback
-```
-
-## Lean↔Lean interop
-
-```bash
-lake build interopServer interopClient
-./.lake/build/bin/interopServer &
-pid=$!
-sleep 1
-for c in empty_unary large_unary status_code_and_message custom_metadata \
-         cancel_after_begin server_streaming client_streaming ping_pong empty_stream; do
-  ./.lake/build/bin/interopClient 127.0.0.1 10000 "$c"
-done
-kill $pid
-```
-
-## Official Go gRPC interop
-
-```bash
-go install google.golang.org/grpc/interop/client@latest
-go install google.golang.org/grpc/interop/server@latest
+lake build bytesTests hpackTests h2Tests grpcTests interopServer interopClient
+./.lake/build/bin/grpcTests
+./scripts/h2spec.sh
 ./scripts/run-go-to-lean.sh
 GRPC_PORT=10001 ./scripts/interop-go-lean.sh
+./scripts/interop-tls-go-lean.sh
+./scripts/build_native.sh   # zlib_helper + tls_proxy
 ```
 
-Cases: unary + cancel + `server_streaming`, `client_streaming`, `ping_pong`, `empty_stream`.
+## Perf (local reference)
 
-Gzip peer:
-
-```bash
-./scripts/gzip-go-lean.sh
-```
-
-## h2spec
-
-```bash
-./scripts/h2spec.sh
-```
-
-**Hard gate** sections: `http2/3.5`, `http2/4.1`, `http2/6.5`, `http2/6.7`, `http2/6.8`.
-Full suite is still logged softly to `/tmp/lean-grpc-h2spec.txt`.
-
-## Benchmarks
-
-```bash
-lake build helloworldServer benchUnary
-./.lake/build/bin/helloworldServer &
-./.lake/build/bin/benchUnary 127.0.0.1 50051 200
-```
-
-| Peer | n | avg_ms | p50_ms | p99_ms |
-|---|---|---|---|---|
-| lean↔lean unary | 200 | ~87 | ~87 | ~99 |
-| tonic peer | — | _(not recorded)_ | — | — |
-
-Numbers are wall-clock ms on a local developer host (not a dedicated bench machine).
-
-## RouteGuide demo
-
-```bash
-lake build routeGuideServer routeGuideClient
-./.lake/build/bin/routeGuideServer &
-./.lake/build/bin/routeGuideClient 127.0.0.1 50052
-```
-
-## Anchor-ready gate
-
-Unary + streaming h2c behind a TLS sidecar is the intended Anchor bar: trailers, flow control, Lean↔Go interop (incl. gzip unary), h2spec core, documented limits (no native TLS, no OAuth/ALTS).
+| Bench | Result |
+|---|---|
+| lean↔lean unary (n=200) | record via `benchUnary` → update here |
+| soak (n=30 helloworld) | hard-gated in CI (`benchSoak`) |

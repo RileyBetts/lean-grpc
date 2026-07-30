@@ -125,7 +125,10 @@ def emitFromProto (text : String) : IO String := do
     for rpc in svc.rpcs do
       let full := if pkg.isEmpty then svc.name else pkg ++ "." ++ svc.name
       if !rpc.clientStreaming && !rpc.serverStreaming then
-        out := out ++ s!"def {rpc.name} (self : {svc.name}Stub) (req : ByteArray) : IO Grpc.CallResult :=\n"
+        out := out ++ s!"/-- Unary `{rpc.name}`: request `{rpc.request}` → `{rpc.response}` (payload bytes). -/\n"
+        out := out ++ s!"abbrev {rpc.name}Request := ByteArray\n"
+        out := out ++ s!"abbrev {rpc.name}Response := ByteArray\n"
+        out := out ++ s!"def {rpc.name} (self : {svc.name}Stub) (req : {rpc.name}Request) : IO Grpc.CallResult :=\n"
         out := out ++ s!"  Grpc.Channel.unary self.channel \"{full}\" \"{rpc.name}\" req\n\n"
       else if !rpc.clientStreaming && rpc.serverStreaming then
         out := out ++ s!"/-- Server-streaming `{rpc.name}`. -/\n"

@@ -38,7 +38,7 @@ def connectH2c (host : String) (port : UInt16) : IO ClientConn := do
     | none => pure (SocketAddress.v4 { addr := IPv4Addr.ofParts 127 0 0 1, port })
   (sock.connect addr).block
   (sock.send clientPreface).block
-  let st := ConnState.create
+  let st := ConnState.create (isServer := false)
   sendFrames sock #[Frame.settings #[
     (.initialWindowSize, st.ourSettings.initialWindowSize),
     (.maxFrameSize, st.ourSettings.maxFrameSize)
@@ -52,9 +52,11 @@ def connectH2c (host : String) (port : UInt16) : IO ClientConn := do
     | none => break
     | some chunk =>
       buf := Bytes.Pool.pushBytes buf chunk
-      let (frames, consumed) ← IO.ofExcept (decodeFrames (Bytes.Slice.ofByteArray buf))
+      let st0 ← state.get
+      let (frames, consumed) ← IO.ofExcept
+        (decodeFrames (Bytes.Slice.ofByteArray buf) st0.ourSettings.maxFrameSize.toNat)
       buf := buf.extract consumed buf.size
-      let mut st ← state.get
+      let mut st := st0
       for f in frames do
         let (st', outs) ← IO.ofExcept (handleFrame st f)
         st := st'
@@ -93,46 +95,60 @@ def startRequest (c : ClientConn) (headers : Array Hpack.HeaderField) (body : By
     sendFrames c.sock (Frame.dataFragmented sid body endStream st.ourSettings.maxFrameSize.toNat)
   return sid
 
-/-- Wait for response headers + data + optional trailers. -/
-partial def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 200) :
-    IO Response := do
+/-- Wait for response headers + data + optional trailers.
+    When `deadlineMs?` is set, RST_STREAM + throw after wall-clock expiry. -/
+partial def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 200)
+    (deadlineMs? : Option Nat := none) (t0 : Nat := 0) : IO Response := do
   if fuel == 0 then throw (IO.userError "timeout waiting response")
+  if let some ms := deadlineMs? then
+    let now ← IO.monoMsNow
+    if now - t0 ≥ ms then
+      sendFrames c.sock #[Frame.rstStream streamId 0x8]
+      throw (IO.userError "DEADLINE_EXCEEDED")
   let st ← c.state.get
   if let some s := st.getStream streamId then
     if s.endStreamRemote && s.endHeaders then
       let trailersReady := s.endTrailers || s.trailersBuf.isEmpty
       if trailersReady then
-        match Hpack.decodeHeaders (Bytes.Slice.ofByteArray s.headersBuf) st.decoderTable with
-        | .error e => throw (IO.userError e)
-        | .ok (hdrs, table0) =>
-          let (trailers, table1) ←
-            if s.trailersBuf.isEmpty then
-              pure (#[] , table0)
-            else
-              match Hpack.decodeHeaders (Bytes.Slice.ofByteArray s.trailersBuf) table0 with
-              | .error e => throw (IO.userError e)
-              | .ok (t, table) => pure (t, table)
-          c.state.set { st with decoderTable := table1 }
-          return { headers := hdrs, trailers, data := s.dataBuf }
+        return {
+          headers := s.requestHeaders
+          trailers := s.decodedTrailers
+          data := s.dataBuf
+        }
   match (← (c.sock.recv? 65536).block) with
   | none => throw (IO.userError "EOF")
   | some chunk =>
     let mut buf ← c.readBuf.get
     buf := Bytes.Pool.pushBytes buf chunk
-    let (frames, consumed) ← IO.ofExcept (decodeFrames (Bytes.Slice.ofByteArray buf))
+    let st0 ← c.state.get
+    let (frames, consumed) ← IO.ofExcept
+      (decodeFrames (Bytes.Slice.ofByteArray buf) st0.ourSettings.maxFrameSize.toNat)
     c.readBuf.set (buf.extract consumed buf.size)
-    let mut st ← c.state.get
+    let mut st := st0
     for f in frames do
       let (st', outs) ← IO.ofExcept (handleFrame st f)
       st := st'
       sendFrames c.sock outs
     c.state.set st
-    awaitResponse c streamId (fuel - 1)
+    awaitResponse c streamId (fuel - 1) deadlineMs? t0
 
-def unary (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray) :
-    IO Response := do
+def unary (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray)
+    (deadlineMs? : Option Nat := none) : IO Response := do
   let sid ← startRequest c headers body true
-  awaitResponse c sid
+  let t0 ← IO.monoMsNow
+  try
+    awaitResponse c sid 200 deadlineMs? t0
+  catch e =>
+    if (toString e).contains "DEADLINE_EXCEEDED" then
+      return {
+        headers := #[]
+        trailers := #[
+          ⟨"grpc-status".toUTF8, "4".toUTF8⟩,
+          ⟨"grpc-message".toUTF8, "deadline exceeded".toUTF8⟩
+        ]
+        data := ByteArray.empty
+      }
+    else throw e
 
 /-- Send RST_STREAM to cancel a stream. -/
 def resetStream (c : ClientConn) (streamId : UInt32) (errorCode : UInt32 := 0x8) : IO Unit := do

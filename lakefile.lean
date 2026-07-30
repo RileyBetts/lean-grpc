@@ -52,6 +52,9 @@ lean_exe interopClient where
 lean_exe benchUnary where
   root := `Bench.Unary
 
+lean_exe benchSoak where
+  root := `Bench.Soak
+
 lean_exe h2specServer where
   root := `Tests.H2specServer
 

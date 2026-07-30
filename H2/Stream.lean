@@ -39,8 +39,16 @@ structure Stream where
   gotHeaders : Bool
   /-- True once we have sent response HEADERS on this stream. -/
   responseHeadersSent : Bool
+  /-- True once the app handler returned `finished := true` (no further invokes). -/
+  handlerFinished : Bool
   /-- Bytes of dataBuf already consumed by incremental streaming handlers. -/
   dataConsumed : Nat
+  /-- Declared content-length from request headers, if any. -/
+  contentLength : Option Nat
+  /-- Decoded headers (set when END_HEADERS completes). -/
+  requestHeaders : Array Hpack.HeaderField
+  /-- Decoded trailers (set when trailer END_HEADERS completes). -/
+  decodedTrailers : Array Hpack.HeaderField
   deriving Inhabited
 
 namespace Stream
@@ -62,7 +70,11 @@ def create (id : UInt32) (sendInit recvInit : UInt32) : Stream :=
     endStreamLocal := false
     gotHeaders := false
     responseHeadersSent := false
-    dataConsumed := 0 }
+    handlerFinished := false
+    dataConsumed := 0
+    contentLength := none
+    requestHeaders := #[]
+    decodedTrailers := #[] }
 
 def isClosed (s : Stream) : Bool := s.state == .closed
 

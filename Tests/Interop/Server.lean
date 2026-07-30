@@ -47,11 +47,12 @@ def main : IO Unit := do
           let (n, v) := headerAscii h
           if n == "grpc-accept-encoding" then return v
         return "identity"
-    let respAlg := Grpc.Compression.negotiate acceptEnc
+    -- Only compress when a case explicitly requests it (response_compressed) or
+    -- when we later set outAlg. Default identity avoids surprising multi-message
+    -- parse issues with peers that probe accept-encoding on every unary.
+    let _ := acceptEnc
     let (initialMd, trailingBin) := echoMd headers
     let mut respHeaders := Grpc.Metadata.http200 ++ initialMd
-    if respAlg != .identity then
-      respHeaders := respHeaders.push (Grpc.Metadata.grpcEncoding respAlg.name)
     let addTrailing (st : Grpc.Status) : Array Hpack.HeaderField :=
       let base := Grpc.Metadata.statusHeaders st
       match trailingBin with
@@ -69,11 +70,19 @@ def main : IO Unit := do
       }
     | "/grpc.testing.TestService/UnaryCall" =>
       if !endStream then return { finished := false }
-      let payloads ←
-        match ← Grpc.Message.decodeAllIO (Bytes.Slice.ofByteArray data) with
+      let flagged ←
+        match ← Grpc.Message.decodeAllWithFlagsIO (Bytes.Slice.ofByteArray data) with
         | .ok ps => pure ps
         | .error e => throw (IO.userError e)
-      let req ← IO.ofExcept (Proto.SimpleRequest.decode (payloads.getD 0 ByteArray.empty))
+      let compressedFlag := (flagged.getD 0 (false, ByteArray.empty)).1
+      let req ← IO.ofExcept (Proto.SimpleRequest.decode (flagged.getD 0 (false, ByteArray.empty)).2)
+      if let some expect := req.expectCompressed then
+        if expect != compressedFlag then
+          return {
+            headers := respHeaders
+            trailers := addTrailing (.invalidArgument "expect_compressed mismatch")
+            finished := true
+          }
       if let some st := req.responseStatus then
         let code := Grpc.StatusCode.ofUInt32 st.code
         return {
@@ -86,9 +95,16 @@ def main : IO Unit := do
         payloadBody := body
         username := if req.fillUsername then "lean" else ""
       }
+      let outAlg :=
+        match req.responseCompressed with
+        | some true => Grpc.Compression.Algorithm.gzip
+        | _ => Grpc.Compression.Algorithm.identity
+      let mut hdrs := respHeaders
+      if outAlg != .identity then
+        hdrs := hdrs.push (Grpc.Metadata.grpcEncoding outAlg.name)
       return {
-        headers := respHeaders
-        body := ← Grpc.Message.encodeIO resp respAlg
+        headers := hdrs
+        body := ← Grpc.Message.encodeIO resp outAlg
         trailers := addTrailing .ok
         finished := true
       }
@@ -96,22 +112,39 @@ def main : IO Unit := do
       if !endStream then return { finished := false }
       let payloads ← IO.ofExcept (Grpc.Message.decodeAll (Bytes.Slice.ofByteArray data))
       let req ← IO.ofExcept (Proto.StreamingOutputCallRequest.decode (payloads.getD 0 ByteArray.empty))
+      let outAlg :=
+        match req.responseCompressed with
+        | some true => Grpc.Compression.Algorithm.gzip
+        | _ => Grpc.Compression.Algorithm.identity
+      let mut hdrs := respHeaders
+      if outAlg != .identity then
+        hdrs := hdrs.push (Grpc.Metadata.grpcEncoding outAlg.name)
       let mut out := ByteArray.empty
       for sz in req.responseParameters do
         let msg := Proto.StreamingOutputCallResponse.encode { payloadBody := zeros sz.toNat }
-        out := Bytes.Pool.pushBytes out (Grpc.Message.encodeId msg)
+        out := Bytes.Pool.pushBytes out (← Grpc.Message.encodeIO msg outAlg)
       return {
-        headers := respHeaders
+        headers := hdrs
         body := out
         trailers := addTrailing .ok
         finished := true
       }
     | "/grpc.testing.TestService/StreamingInputCall" =>
       if !endStream then return { finished := false }
-      let payloads ← IO.ofExcept (Grpc.Message.decodeAll (Bytes.Slice.ofByteArray data))
+      let flagged ←
+        match ← Grpc.Message.decodeAllWithFlagsIO (Bytes.Slice.ofByteArray data) with
+        | .ok ps => pure ps
+        | .error e => throw (IO.userError e)
       let mut total : Nat := 0
-      for p in payloads do
+      for (compressedFlag, p) in flagged do
         let req ← IO.ofExcept (Proto.StreamingInputCallRequest.decode p)
+        if let some expect := req.expectCompressed then
+          if expect != compressedFlag then
+            return {
+              headers := respHeaders
+              trailers := addTrailing (.invalidArgument "expect_compressed mismatch")
+              finished := true
+            }
         total := total + req.payloadBody.size
       let resp := Proto.StreamingInputCallResponse.encode { aggregatedPayloadSize := total.toUInt32 }
       return {
@@ -125,16 +158,24 @@ def main : IO Unit := do
       let (msgs, _rest) ← IO.ofExcept (Grpc.Stream.decodeAvailable data)
       if msgs.isEmpty && !endStream then
         return { finished := false }
+      -- timeout_on_sleeping_server: sleep when asked via responseStatus message "sleep"
+      for p in msgs do
+        let req ← IO.ofExcept (Proto.StreamingOutputCallRequest.decode p)
+        if let some st := req.responseStatus then
+          if st.message == "sleep" then
+            -- Longer than typical interop client deadlines (e.g. 100ms).
+            IO.sleep 2000
       let mut out := ByteArray.empty
       for p in msgs do
         let req ← IO.ofExcept (Proto.StreamingOutputCallRequest.decode p)
         if let some st := req.responseStatus then
-          let code := Grpc.StatusCode.ofUInt32 st.code
-          return {
-            headers := if headersSent then #[] else respHeaders
-            trailers := addTrailing ⟨code, st.message⟩
-            finished := true
-          }
+          if st.message != "sleep" then
+            let code := Grpc.StatusCode.ofUInt32 st.code
+            return {
+              headers := if headersSent then #[] else respHeaders
+              trailers := addTrailing ⟨code, st.message⟩
+              finished := true
+            }
         for sz in req.responseParameters do
           let msg := Proto.StreamingOutputCallResponse.encode { payloadBody := zeros sz.toNat }
           out := Bytes.Pool.pushBytes out (Grpc.Message.encodeId msg)
@@ -151,6 +192,13 @@ def main : IO Unit := do
           body := out
           finished := false
         }
+    | "/grpc.testing.UnimplementedService/UnimplementedCall" =>
+      if !endStream then return { finished := false }
+      return {
+        headers := respHeaders
+        trailers := addTrailing (.unimplemented "unimplemented")
+        finished := true
+      }
     | _ =>
       if !endStream then return { finished := false }
       return {

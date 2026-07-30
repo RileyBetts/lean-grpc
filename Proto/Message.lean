@@ -92,28 +92,46 @@ def Payload.decode (b : ByteArray) : Except String Payload := do
     body := (Wire.fieldBytes? fields 2).getD ByteArray.empty
   }
 
-/-- Interop SimpleRequest (subset of grpc.testing.SimpleRequest). -/
+/-- BoolValue { bool value = 1; } used by expect_compressed. -/
+structure BoolValue where
+  value : Bool := false
+  deriving Inhabited
+
+def BoolValue.encode (b : BoolValue) : ByteArray :=
+  if b.value then Wire.encodeBool ByteArray.empty 1 true else ByteArray.empty
+
+def BoolValue.decode (b : ByteArray) : Except String BoolValue := do
+  let fields ← Wire.decodeFields (Bytes.Slice.ofByteArray b)
+  return { value := (Wire.fieldUInt32? fields 1).getD 0 != 0 }
+
+/-- Interop SimpleRequest (subset of grpc.testing.SimpleRequest).
+    Field numbers match official messages.proto. -/
 structure SimpleRequest where
   responseSize : UInt32 := 0
   fillUsername : Bool := false
+  responseCompressed : Option Bool := none
   responseStatus : Option EchoStatus := none
+  expectCompressed : Option Bool := none
   payloadBody : ByteArray := ByteArray.empty
   deriving Inhabited
 
 def SimpleRequest.encode (r : SimpleRequest) : ByteArray :=
   Id.run do
     let mut acc := ByteArray.empty
-    -- grpc.testing.SimpleRequest: response_size = 2, payload = 3, fill_username = 4,
-    -- response_status = 8
+    -- response_size=2, payload=3, fill_username=4, response_compressed=6,
+    -- response_status=7, expect_compressed=8
     if r.responseSize != 0 then
       acc := Wire.encodeUInt32 acc 2 r.responseSize
     if !r.payloadBody.isEmpty then
       acc := Wire.encodeBytes acc 3 (Payload.encode { body := r.payloadBody })
     if r.fillUsername then
       acc := Wire.encodeBool acc 4 true
-    -- response_status = 7 in grpc.testing.SimpleRequest
+    if let some rc := r.responseCompressed then
+      acc := Wire.encodeMessage acc 6 (BoolValue.encode { value := rc })
     if let some st := r.responseStatus then
       acc := Wire.encodeBytes acc 7 (EchoStatus.encode st)
+    if let some ec := r.expectCompressed then
+      acc := Wire.encodeMessage acc 8 (BoolValue.encode { value := ec })
     return acc
 
 def SimpleRequest.decode (b : ByteArray) : Except String SimpleRequest := do
@@ -129,11 +147,21 @@ def SimpleRequest.decode (b : ByteArray) : Except String SimpleRequest := do
     match statusBytes with
     | none => pure none
     | some sb => some <$> EchoStatus.decode sb
+  let responseCompressed ←
+    match Wire.fieldBytes? fields 6 with
+    | none => pure none
+    | some bb => some <$> (BoolValue.decode bb |>.map (·.value))
+  let expectCompressed ←
+    match Wire.fieldBytes? fields 8 with
+    | none => pure none
+    | some bb => some <$> (BoolValue.decode bb |>.map (·.value))
   return {
     responseSize := (Wire.fieldUInt32? fields 2).getD 0
     fillUsername := (Wire.fieldUInt32? fields 4).getD 0 != 0
+    responseCompressed
     responseStatus
     payloadBody := payload
+    expectCompressed
   }
 
 structure SimpleResponse where
@@ -167,6 +195,8 @@ def SimpleResponse.decode (b : ByteArray) : Except String SimpleResponse := do
 structure StreamingOutputCallRequest where
   responseParameters : Array UInt32 := #[]  -- sizes
   responseStatus : Option EchoStatus := none
+  /-- When set, server should compress (true) or not (false) response payloads. -/
+  responseCompressed : Option Bool := none
   deriving Inhabited
 
 /-- Nested ResponseParameters; sizes are also exposed as a flat array for callers. -/
@@ -195,6 +225,8 @@ def StreamingOutputCallRequest.encode (r : StreamingOutputCallRequest) : ByteArr
     for sz in r.responseParameters do
       -- ResponseParameters { size = 1; } nested in field 2 (repeated)
       acc := Wire.encodeMessage acc 2 (ResponseParameters.encode { size := sz })
+    if let some rc := r.responseCompressed then
+      acc := Wire.encodeMessage acc 6 (BoolValue.encode { value := rc })
     if let some st := r.responseStatus then
       acc := Wire.encodeMessage acc 7 (EchoStatus.encode st)
     return acc
@@ -209,7 +241,11 @@ def StreamingOutputCallRequest.decode (b : ByteArray) : Except String StreamingO
     match Wire.fieldBytes? fields 7 with
     | none => pure none
     | some sb => some <$> EchoStatus.decode sb
-  return { responseParameters := sizes, responseStatus }
+  let responseCompressed ←
+    match Wire.fieldBytes? fields 6 with
+    | none => pure none
+    | some bb => some <$> (BoolValue.decode bb |>.map (·.value))
+  return { responseParameters := sizes, responseStatus, responseCompressed }
 
 structure StreamingOutputCallResponse where
   payloadBody : ByteArray := ByteArray.empty
@@ -231,11 +267,17 @@ def StreamingOutputCallResponse.decode (b : ByteArray) : Except String Streaming
 
 structure StreamingInputCallRequest where
   payloadBody : ByteArray := ByteArray.empty
+  expectCompressed : Option Bool := none
   deriving Inhabited
 
 def StreamingInputCallRequest.encode (r : StreamingInputCallRequest) : ByteArray :=
-  if r.payloadBody.isEmpty then ByteArray.empty
-  else Wire.encodeBytes ByteArray.empty 1 (Payload.encode { body := r.payloadBody })
+  Id.run do
+    let mut acc := ByteArray.empty
+    if !r.payloadBody.isEmpty then
+      acc := Wire.encodeBytes acc 1 (Payload.encode { body := r.payloadBody })
+    if let some ec := r.expectCompressed then
+      acc := Wire.encodeMessage acc 2 (BoolValue.encode { value := ec })
+    return acc
 
 def StreamingInputCallRequest.decode (b : ByteArray) : Except String StreamingInputCallRequest := do
   let fields ← Wire.decodeFields (Bytes.Slice.ofByteArray b)
@@ -245,7 +287,11 @@ def StreamingInputCallRequest.decode (b : ByteArray) : Except String StreamingIn
     else do
       let p ← Payload.decode payloadBytes
       pure p.body
-  return { payloadBody := payload }
+  let expectCompressed ←
+    match Wire.fieldBytes? fields 2 with
+    | none => pure none
+    | some bb => some <$> (BoolValue.decode bb |>.map (·.value))
+  return { payloadBody := payload, expectCompressed }
 
 structure StreamingInputCallResponse where
   aggregatedPayloadSize : UInt32 := 0

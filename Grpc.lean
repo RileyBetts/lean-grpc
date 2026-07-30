@@ -12,10 +12,19 @@ import Grpc.Message
 import Grpc.Metadata
 import Grpc.Server
 import Grpc.Client
-import Grpc.Channel
 import Grpc.Stream
 import Grpc.Tls
+import Grpc.Credentials
+import Grpc.Resolver
+import Grpc.Balancer
+import Grpc.ServiceConfig
+import Grpc.Retry
+import Grpc.Channel
+import Grpc.Health
+import Grpc.Reflection
+import Grpc.Channelz
+import Grpc.Gcp
 
 namespace Grpc
-def version : String := "0.1.0"
+def version : String := "0.3.0"
 end Grpc

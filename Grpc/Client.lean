@@ -65,7 +65,16 @@ def unaryCall (c : H2.ClientConn) (service method : String) (authority : String)
   if compress != .identity then
     headers := headers.push (Metadata.grpcEncoding compress.name)
   let body ← Message.encodeIO request compress
-  let resp ← H2.Client.unary c headers body
+  let deadlineMs? : Option Nat :=
+    Id.run do
+      for h in extraHeaders do
+        let (n, v) := headerAscii h
+        if n == "grpc-timeout" then
+          match Metadata.parseTimeoutMs v with
+          | some ms => return some ms
+          | none => pure ()
+      return none
+  let resp ← H2.Client.unary c headers body deadlineMs?
   let status := statusFromHeaders resp.headers resp.trailers
   let payloads ←
     match ← Message.decodeAllIO (Bytes.Slice.ofByteArray resp.data) with

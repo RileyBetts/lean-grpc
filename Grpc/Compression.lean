@@ -98,12 +98,13 @@ def gzipDecodeStored (data : ByteArray) : Except String ByteArray := do
   if expectCrc != got then throw "crc mismatch"
   return out
 
-/-- Peer-compatible gzip via system `gzip` (real deflate). Falls back to stored encode. -/
-def gzipEncodePeer (payload : ByteArray) : IO ByteArray := do
+/-- Prefer in-process zlib via `scripts/build_native.sh` helper when
+    `LEAN_GRPC_ZLIB_HELPER` points at a filter binary; else system `gzip`; else stored. -/
+private def runFilter (cmd : String) (args : Array String) (payload : ByteArray) : IO (Option ByteArray) := do
   try
     let child ← IO.Process.spawn {
-      cmd := "gzip"
-      args := #["-c", "-n"]
+      cmd := cmd
+      args := args
       stdin := .piped
       stdout := .piped
       stderr := .piped
@@ -115,34 +116,24 @@ def gzipEncodePeer (payload : ByteArray) : IO ByteArray := do
     let _ ← child.stderr.readBinToEnd
     let code ← child.wait
     let out ← IO.ofExcept stdout.get
-    if code != 0 || (out.isEmpty && !payload.isEmpty) then
-      return gzipEncodeStored payload
-    return out
+    if code != 0 || (out.isEmpty && !payload.isEmpty) then return none
+    return some out
   catch _ =>
-    return gzipEncodeStored payload
+    return none
 
-/-- Peer-compatible gunzip via system `gzip -dc`; falls back to stored decoder. -/
+/-- Peer-compatible gzip: zlib helper → system gzip → stored deflate. -/
+def gzipEncodePeer (payload : ByteArray) : IO ByteArray := do
+  if let some helper := ← IO.getEnv "LEAN_GRPC_ZLIB_HELPER" then
+    if let some out ← runFilter helper #["compress"] payload then return out
+  if let some out ← runFilter "gzip" #["-c", "-n"] payload then return out
+  return gzipEncodeStored payload
+
+/-- Peer-compatible gunzip: zlib helper → system gzip -dc → stored decoder. -/
 def gzipDecodePeer (data : ByteArray) : IO (Except String ByteArray) := do
-  try
-    let child ← IO.Process.spawn {
-      cmd := "gzip"
-      args := #["-dc"]
-      stdin := .piped
-      stdout := .piped
-      stderr := .piped
-    }
-    let (stdin, child) ← child.takeStdin
-    stdin.write data
-    stdin.flush
-    let stdout ← IO.asTask (child.stdout.readBinToEnd) Task.Priority.dedicated
-    let _ ← child.stderr.readBinToEnd
-    let code ← child.wait
-    let out ← IO.ofExcept stdout.get
-    if code != 0 then
-      return gzipDecodeStored data
-    return .ok out
-  catch _ =>
-    return gzipDecodeStored data
+  if let some helper := ← IO.getEnv "LEAN_GRPC_ZLIB_HELPER" then
+    if let some out ← runFilter helper #["decompress"] data then return .ok out
+  if let some out ← runFilter "gzip" #["-dc"] data then return .ok out
+  return gzipDecodeStored data
 
 def compress (alg : Algorithm) (payload : ByteArray) : Except String ByteArray :=
   match alg with

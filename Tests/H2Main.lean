@@ -38,8 +38,13 @@ def main : IO Unit := do
   if stripped != block then throw (IO.userError "strip mismatch")
 
   -- Trailers path: first HEADERS then second HEADERS with END_STREAM
+  let reqBlock := Hpack.encodeHeadersIndexed #[
+    ⟨ascii ":method", ascii "POST"⟩,
+    ⟨ascii ":scheme", ascii "http"⟩,
+    ⟨ascii ":path", ascii "/"⟩
+  ]
   let stA := H2.ConnState.create
-  let h1 := H2.Frame.headers 1 block false true
+  let h1 := H2.Frame.headers 1 reqBlock false true
   let (stB, _) ← IO.ofExcept (H2.handleFrame stA h1)
   let trBlock := Hpack.encodeHeadersIndexed #[⟨ascii "grpc-status", ascii "0"⟩]
   let h2 := H2.Frame.headers 1 trBlock true true
@@ -64,7 +69,7 @@ def main : IO Unit := do
   let st0 := H2.ConnState.create
   let setWin := H2.Frame.settings #[(.initialWindowSize, 1)]
   let (st1, _) ← IO.ofExcept (H2.handleFrame st0 setWin)
-  let hReq := H2.Frame.headers 1 block true true
+  let hReq := H2.Frame.headers 1 reqBlock true true
   let (st2, _) ← IO.ofExcept (H2.handleFrame st1 hReq)
   let (st3, dataFrames) := H2.queueSend st2 1 (ByteArray.mk #[0x6f, 0x6b]) #[] true
   if dataFrames.size != 1 then throw (IO.userError s!"data frames {dataFrames.size}")

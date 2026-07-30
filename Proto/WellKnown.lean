@@ -1,0 +1,65 @@
+/-
+Copyright (c) 2026 RileyBetts. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+-/
+import Proto.Wire
+import Bytes.Slice
+
+namespace Proto.WellKnown
+
+/-- google.protobuf.Any (type_url + value). -/
+structure AnyMsg where
+  typeUrl : String := ""
+  value : ByteArray := ByteArray.empty
+  deriving Inhabited
+
+def AnyMsg.encode (a : AnyMsg) : ByteArray :=
+  Id.run do
+    let mut acc := ByteArray.empty
+    if !a.typeUrl.isEmpty then acc := Wire.encodeString acc 1 a.typeUrl
+    if !a.value.isEmpty then acc := Wire.encodeBytes acc 2 a.value
+    return acc
+
+def AnyMsg.decode (b : ByteArray) : Except String AnyMsg := do
+  let fields ← Wire.decodeFields (Bytes.Slice.ofByteArray b)
+  return {
+    typeUrl := (Wire.fieldString? fields 1).getD ""
+    value := (Wire.fieldBytes? fields 2).getD ByteArray.empty
+  }
+
+/-- Minimal oneof tag helper: which field number was set (first match). -/
+def oneofWhich (fields : Array Wire.Field) (candidates : Array Nat) : Option Nat :=
+  Id.run do
+    for n in candidates do
+      for f in fields do
+        if f.number == n then return some n
+    return none
+
+/-- Map entry: key (field 1 string) + value (field 2 bytes). -/
+structure MapEntry where
+  key : String := ""
+  value : ByteArray := ByteArray.empty
+  deriving Inhabited
+
+def MapEntry.encode (e : MapEntry) : ByteArray :=
+  Id.run do
+    let mut acc := ByteArray.empty
+    if !e.key.isEmpty then acc := Wire.encodeString acc 1 e.key
+    if !e.value.isEmpty then acc := Wire.encodeBytes acc 2 e.value
+    return acc
+
+def MapEntry.decode (b : ByteArray) : Except String MapEntry := do
+  let fields ← Wire.decodeFields (Bytes.Slice.ofByteArray b)
+  return {
+    key := (Wire.fieldString? fields 1).getD ""
+    value := (Wire.fieldBytes? fields 2).getD ByteArray.empty
+  }
+
+/-- Decode repeated map entries (length-delimited messages on `field`). -/
+def decodeMap (fields : Array Wire.Field) (field : Nat) : Except String (Array MapEntry) := do
+  let mut out : Array MapEntry := #[]
+  for nested in Wire.fieldBytesMany fields field do
+    out := out.push (← MapEntry.decode nested)
+  return out
+
+end Proto.WellKnown

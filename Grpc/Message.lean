@@ -97,5 +97,20 @@ def decodeAllIO (buf : Bytes.Slice) (allowGzip : Bool := true) : IO (Except Stri
       s := rest
   return .ok out
 
+/-- Decode all messages preserving each frame's Compressed-Flag. -/
+def decodeAllWithFlagsIO (buf : Bytes.Slice) (allowGzip : Bool := true) :
+    IO (Except String (Array (Bool × ByteArray))) := do
+  let mut s := buf
+  let mut out : Array (Bool × ByteArray) := #[]
+  while !s.isEmpty do
+    if s.size < 5 then return .error "short grpc frame"
+    let compressed := s.get! 0 != 0
+    match ← decodeOneIO s allowGzip with
+    | .error e => return .error e
+    | .ok (p, rest) =>
+      out := out.push (compressed, p)
+      s := rest
+  return .ok out
+
 end Message
 end Grpc

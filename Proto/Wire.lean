@@ -43,7 +43,7 @@ def encodeKey (acc : ByteArray) (field : Nat) (wt : WireType) : ByteArray :=
   encodeVarint acc (((field <<< 3) + wt.toNat).toUInt64)
 
 def encodeString (acc : ByteArray) (field : Nat) (s : String) : ByteArray :=
-  let bytes := ByteArray.mk (s.toList.map (·.toNat.toUInt8)).toArray
+  let bytes := s.toUTF8
   let acc := encodeKey acc field .lengthDelimited
   let acc := encodeVarint acc bytes.size.toUInt64
   Bytes.Pool.pushBytes acc bytes
@@ -103,7 +103,8 @@ def fieldString? (fields : Array Field) (n : Nat) : Option String :=
   Id.run do
     for f in fields do
       if f.number == n && f.wireType == .lengthDelimited then
-        return some (String.ofList (f.payload.toList.map (fun b => Char.ofNat b.toNat)))
+        return some (String.fromUTF8? f.payload |>.getD
+          (String.ofList (f.payload.toList.map (fun b => Char.ofNat b.toNat))))
     return none
 
 def fieldUInt32? (fields : Array Field) (n : Nat) : Option UInt32 :=

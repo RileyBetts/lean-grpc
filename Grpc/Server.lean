@@ -72,11 +72,23 @@ private def encodeManyIO (msgs : Array ByteArray) (alg : Compression.Algorithm) 
 
 def serveH2c (s : Server) (cfg : H2.ServerConfig := {}) : IO Unit := do
   let handler : H2.StreamHandler := fun _streamId headers data endStream headersSent => do
-    if headersSent && !endStream then
+    if headersSent && !endStream && data.isEmpty then
       return { finished := false }
-    -- Streaming methods that need incremental bidi still use raw H2 handlers in interop;
-    -- registered handlers wait for client half-close (buffered stream API).
-    if !endStream then
+    -- Resolve path early so incremental bidi can respond before half-close.
+    let path0 :=
+      Id.run do
+        for h in headers do
+          let (n, v) := headerAscii h
+          if n == ":path" then return v
+        return ""
+    let earlyBidi :=
+      match findHandler s path0 with
+      | some (.bidi _) => true
+      | _ => false
+    -- Non-bidi handlers wait for client half-close (buffered stream API).
+    if !endStream && !earlyBidi then
+      return { finished := false }
+    if !endStream && earlyBidi && data.isEmpty then
       return { finished := false }
     let mut path := ""
     let mut contentType := ""
@@ -172,13 +184,23 @@ def serveH2c (s : Server) (cfg : H2.ServerConfig := {}) : IO Unit := do
           finished := true
         }
       | .bidi h =>
+        if payloads.isEmpty && !endStream then
+          return { finished := false }
         let (msgs, st) ← h payloads
-        return {
-          headers := respHeaders
-          body := ← encodeManyIO msgs respAlg
-          trailers := Metadata.statusHeaders st
-          finished := true
-        }
+        if endStream then
+          return {
+            headers := if headersSent then #[] else respHeaders
+            body := ← encodeManyIO msgs respAlg
+            trailers := Metadata.statusHeaders st
+            finished := true
+          }
+        else
+          -- Incremental duplex: emit responses while the client stream stays open.
+          return {
+            headers := if headersSent then #[] else respHeaders
+            body := ← encodeManyIO msgs respAlg
+            finished := false
+          }
   H2.Server.listen cfg handler
 
 end Server

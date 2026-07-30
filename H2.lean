@@ -8,6 +8,7 @@ import H2.Preface
 import H2.Frame
 import H2.Settings
 import H2.Stream
+import H2.Headers
 import H2.Connection
 import H2.Server
 import H2.Client

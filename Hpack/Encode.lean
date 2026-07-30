@@ -80,22 +80,34 @@ def encodeHeadersDynamic (headers : Array HeaderField) (table : DynamicTable)
           table := table.insert h
     return (out, table)
 
-/-- Decode a full header block. -/
-def decodeHeaders (block : Bytes.Slice) (table : DynamicTable := .empty) :
+/-- Decode a full header block.
+    Dynamic table size updates are only legal at the start of the block.
+    Indexed representation with index 0 is a compression error. -/
+def decodeHeaders (block : Bytes.Slice) (table : DynamicTable := .empty)
+    (maxTableSize : Nat := 4096) :
     Except String (Array HeaderField × DynamicTable) := do
   let mut pos : Nat := 0
   let mut headers : Array HeaderField := #[]
   let mut table := table
+  let mut seenField := false
   while pos < block.size do
     let b ← block.get? pos |>.elim (throw "truncated header") pure
-    if (b &&& 128) != 0 then
-      -- Indexed
+    if (b &&& 224) == 32 then
+      -- Dynamic table size update (must precede any field representation)
+      if seenField then throw "table size update after fields"
+      let (sz, pos') ← decodeInteger block pos 5
+      pos := pos'
+      if sz > maxTableSize then throw "table size update too large"
+      table := DynamicTable.evict { table with maxSize := sz }
+    else if (b &&& 128) != 0 then
+      seenField := true
       let (idx, pos') ← decodeInteger block pos 7
       pos := pos'
+      if idx == 0 then throw "indexed index 0"
       let h ← table.get? idx |>.elim (throw s!"bad index {idx}") pure
       headers := headers.push h
     else if (b &&& 192) == 64 then
-      -- Literal with incremental indexing
+      seenField := true
       let (nameIdx, pos') ← decodeInteger block pos 6
       pos := pos'
       let (name, pos2) ←
@@ -110,7 +122,7 @@ def decodeHeaders (block : Bytes.Slice) (table : DynamicTable := .empty) :
       table := table.insert field
       headers := headers.push field
     else if (b &&& 240) == 0 then
-      -- Literal without indexing
+      seenField := true
       let (nameIdx, pos') ← decodeInteger block pos 4
       pos := pos'
       let (name, pos2) ←
@@ -123,7 +135,7 @@ def decodeHeaders (block : Bytes.Slice) (table : DynamicTable := .empty) :
       pos := pos3
       headers := headers.push ⟨name, value⟩
     else if (b &&& 240) == 16 then
-      -- Never indexed
+      seenField := true
       let (nameIdx, pos') ← decodeInteger block pos 4
       pos := pos'
       let (name, pos2) ←
@@ -135,11 +147,6 @@ def decodeHeaders (block : Bytes.Slice) (table : DynamicTable := .empty) :
       let (value, pos3) ← decodeString block pos
       pos := pos3
       headers := headers.push ⟨name, value⟩
-    else if (b &&& 224) == 32 then
-      -- Dynamic table size update
-      let (sz, pos') ← decodeInteger block pos 5
-      pos := pos'
-      table := DynamicTable.evict { table with maxSize := sz }
     else
       throw s!"unknown header representation at {pos}"
   return (headers, table)

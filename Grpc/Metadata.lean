@@ -34,18 +34,21 @@ private def hexDigit (n : Nat) : Char :=
   let hex := #['0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F']
   hex[n]!
 
-/-- Percent-encode for grpc-message (RFC 3986 unreserved + common safe chars). -/
+/-- Percent-encode UTF-8 bytes for grpc-message (RFC 3986 unreserved). -/
 def percentEncode (s : String) : String :=
   Id.run do
+    let bytes := s.toUTF8
     let mut out := ""
-    for c in s.toList do
+    for i in [:bytes.size] do
+      let n := (bytes.get! i).toNat
+      let c := Char.ofNat n
       let ok :=
-        ('a' ≤ c && c ≤ 'z') || ('A' ≤ c && c ≤ 'Z') || ('0' ≤ c && c ≤ '9') ||
-        c == '-' || c == '_' || c == '.' || c == '~'
+        n < 128 &&
+          (('a' ≤ c && c ≤ 'z') || ('A' ≤ c && c ≤ 'Z') || ('0' ≤ c && c ≤ '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~')
       if ok then
         out := out.push c
       else
-        let n := c.toNat
         out := out ++ "%" ++ String.singleton (hexDigit (n / 16))
           ++ String.singleton (hexDigit (n % 16))
     return out
@@ -59,22 +62,24 @@ private def hexVal (c : Char) : Option Nat :=
 def percentDecode (s : String) : String :=
   Id.run do
     let cs := s.toList.toArray
-    let mut out := ""
+    let mut bytes := ByteArray.empty
     let mut i := 0
     while i < cs.size do
       let c := cs[i]!
       if c == '%' && i + 2 < cs.size then
         match hexVal cs[i+1]!, hexVal cs[i+2]! with
         | some hi, some lo =>
-          out := out.push (Char.ofNat (hi * 16 + lo))
+          bytes := bytes.push (hi * 16 + lo).toUInt8
           i := i + 3
         | _, _ =>
-          out := out.push c
+          bytes := bytes.push c.toNat.toUInt8
           i := i + 1
       else
-        out := out.push c
+        bytes := bytes.push c.toNat.toUInt8
         i := i + 1
-    return out
+    match String.fromUTF8? bytes with
+    | some str => str
+    | none => String.ofList (bytes.toList.map (fun b => Char.ofNat b.toNat))
 
 private def b64Alphabet : Array Char :=
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toList.toArray

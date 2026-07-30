@@ -69,7 +69,14 @@ def responseHeaderFrames (streamId : UInt32) (headers : Array Hpack.HeaderField)
 /-- Drain buffered reads into frames and handle them. -/
 partial def processBuffer (sock : TCP.Socket.Client) (st : ConnState) (buf : ByteArray)
     (handler : StreamHandler) : IO (ConnState × ByteArray) := do
-  let (frames, consumed) ← IO.ofExcept (decodeFrames (Bytes.Slice.ofByteArray buf))
+  let (frames, consumed) ←
+    match decodeFrames (Bytes.Slice.ofByteArray buf) st.ourSettings.maxFrameSize.toNat with
+    | .error e =>
+      if e.startsWith "frame too large" then
+        sendFrames sock #[Frame.goAway st.lastPeerStreamId 0x6] -- FRAME_SIZE_ERROR
+        return ({ st with wentAway := true }, ByteArray.empty)
+      else throw (IO.userError e)
+    | .ok x => pure x
   let mut st := st
   let mut replies : Array Frame := #[]
   for f in frames do
@@ -78,46 +85,47 @@ partial def processBuffer (sock : TCP.Socket.Client) (st : ConnState) (buf : Byt
     replies := replies ++ outs
     if let some s := st.getStream f.streamId then
       if s.endHeaders && s.state != .closed then
+        -- After `finished := true`, only flushPending may run (no re-invoke).
+        -- Incremental duplex keeps invoking until it returns finished (trailers).
         let shouldInvoke :=
-          s.endStreamRemote || (s.dataBuf.size > s.dataConsumed)
+          !s.handlerFinished && (s.endStreamRemote || (s.dataBuf.size > s.dataConsumed))
         if shouldInvoke then
-          match Hpack.decodeHeaders (Bytes.Slice.ofByteArray s.headersBuf) st.decoderTable with
-          | .error e => throw (IO.userError e)
-          | .ok (hdrs, table) =>
-            st := { st with decoderTable := table }
-            let fresh := s.dataBuf.extract s.dataConsumed s.dataBuf.size
-            let resp ← handler s.id hdrs fresh s.endStreamRemote s.responseHeadersSent
-            let emitFrames := !resp.headers.isEmpty || resp.body.size > 0 ||
-              (resp.finished && (s.responseHeadersSent || !resp.headers.isEmpty || !resp.trailers.isEmpty))
-            if emitFrames then
-              replies := replies ++ responseHeaderFrames s.id resp.headers
-                (resp.body.size == 0) resp.trailers.isEmpty s.responseHeadersSent resp.finished
-              let headersNowSent := s.responseHeadersSent || !resp.headers.isEmpty
-              let endOnHeaders := resp.finished && resp.body.size == 0 && resp.trailers.isEmpty
-                && !s.responseHeadersSent && !resp.headers.isEmpty
-              let s := { s with
-                dataConsumed := s.dataBuf.size
-                responseHeadersSent := headersNowSent
-                headersBuf := if resp.finished then ByteArray.empty else s.headersBuf
-                dataBuf := if resp.finished then ByteArray.empty else s.dataBuf
-                trailersBuf := if resp.finished then ByteArray.empty else s.trailersBuf }
-              st := st.upsertStream s
-              if !endOnHeaders && (resp.body.size > 0 || !resp.trailers.isEmpty ||
-                  (resp.finished && headersNowSent)) then
-                let (st', dataFrames) := queueSend st s.id resp.body resp.trailers resp.finished
-                st := st'
-                replies := replies ++ dataFrames
-            else
-              -- Only advance the data cursor when the handler consumed bytes or finished.
-              let advanced := resp.finished || resp.body.size > 0 || !resp.headers.isEmpty
-              let s := { s with
-                dataConsumed := if advanced then s.dataBuf.size else s.dataConsumed
-                responseHeadersSent := s.responseHeadersSent || !resp.headers.isEmpty
-                state := if resp.finished then .closed else s.state
-                headersBuf := if resp.finished then ByteArray.empty else s.headersBuf
-                dataBuf := if resp.finished then ByteArray.empty else s.dataBuf
-                trailersBuf := if resp.finished then ByteArray.empty else s.trailersBuf }
-              st := st.upsertStream s
+          let hdrs := s.requestHeaders
+          let fresh := s.dataBuf.extract s.dataConsumed s.dataBuf.size
+          let resp ← handler s.id hdrs fresh s.endStreamRemote s.responseHeadersSent
+          let emitFrames := !resp.headers.isEmpty || resp.body.size > 0 ||
+            (resp.finished && (s.responseHeadersSent || !resp.headers.isEmpty || !resp.trailers.isEmpty))
+          if emitFrames then
+            replies := replies ++ responseHeaderFrames s.id resp.headers
+              (resp.body.size == 0) resp.trailers.isEmpty s.responseHeadersSent resp.finished
+            let headersNowSent := s.responseHeadersSent || !resp.headers.isEmpty
+            let endOnHeaders := resp.finished && resp.body.size == 0 && resp.trailers.isEmpty
+              && !s.responseHeadersSent && !resp.headers.isEmpty
+            -- Keep stream open until flushPending finishes (flow-control WINDOW_UPDATE).
+            let s := { s with
+              dataConsumed := s.dataBuf.size
+              responseHeadersSent := headersNowSent
+              handlerFinished := resp.finished || s.handlerFinished
+              headersBuf := if resp.finished then ByteArray.empty else s.headersBuf
+              dataBuf := if resp.finished then ByteArray.empty else s.dataBuf
+              trailersBuf := if resp.finished then ByteArray.empty else s.trailersBuf }
+            st := st.upsertStream s
+            if !endOnHeaders && (resp.body.size > 0 || !resp.trailers.isEmpty ||
+                (resp.finished && headersNowSent)) then
+              let (st', dataFrames) := queueSend st s.id resp.body resp.trailers resp.finished
+              st := st'
+              replies := replies ++ dataFrames
+          else
+            let advanced := resp.finished || resp.body.size > 0 || !resp.headers.isEmpty
+            let s := { s with
+              dataConsumed := if advanced then s.dataBuf.size else s.dataConsumed
+              responseHeadersSent := s.responseHeadersSent || !resp.headers.isEmpty
+              handlerFinished := resp.finished || s.handlerFinished
+              state := if resp.finished then .closed else s.state
+              headersBuf := if resp.finished then ByteArray.empty else s.headersBuf
+              dataBuf := if resp.finished then ByteArray.empty else s.dataBuf
+              trailersBuf := if resp.finished then ByteArray.empty else s.trailersBuf }
+            st := st.upsertStream s
   sendFrames sock replies
   let rest := buf.extract consumed buf.size
   return (st, rest)

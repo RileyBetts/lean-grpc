@@ -59,4 +59,40 @@ def main : IO Unit := do
   | some 0 => pure ()
   | _ => throw (IO.userError "timeout n")
 
+  -- UTF-8 percent encode (special_status_message)
+  let msg := "BMP ☺ emoji 😈"
+  let enc := Grpc.Metadata.percentEncode msg
+  if !(enc.contains "%E2") then throw (IO.userError s!"pct utf8 {enc}")
+  if Grpc.Metadata.percentDecode enc != msg then throw (IO.userError "pct roundtrip")
+
+  -- Resolver / service config / retry
+  let addr ← IO.ofExcept (Grpc.Resolver.parseTarget "dns:///127.0.0.1:10000")
+  if addr.port != 10000 then throw (IO.userError "resolver port")
+  let cfg := Grpc.ServiceConfig.parse "{\"loadBalancingPolicy\":\"round_robin\",\"timeout\":\"1s\"}"
+  if cfg.loadBalancingPolicy != "round_robin" then throw (IO.userError "lb policy")
+  if cfg.timeoutMs != some 1000 then throw (IO.userError "svc timeout")
+  let policy : Grpc.ServiceConfig.RetryPolicy := { maxAttempts := 3, retryableStatusCodes := #[14] }
+  if !Grpc.Retry.shouldRetry policy .unavailable 0 then throw (IO.userError "retry")
+  if Grpc.Retry.shouldRetry policy .ok 0 then throw (IO.userError "no retry ok")
+
+  -- Credentials compose
+  let creds := Grpc.Credentials.CallCredentials.composite
+    (Grpc.Credentials.CallCredentials.accessToken "t")
+    (Grpc.Credentials.CallCredentials.jwt "j.w.t")
+  let md ← creds.apply {}
+  if (md.get? "authorization").isNone then throw (IO.userError "creds")
+
+  -- Well-known Any + map
+  let anyB := Proto.WellKnown.AnyMsg.encode { typeUrl := "type.googleapis.com/x", value := ByteArray.mk #[1] }
+  let any ← IO.ofExcept (Proto.WellKnown.AnyMsg.decode anyB)
+  if any.typeUrl != "type.googleapis.com/x" then throw (IO.userError "any")
+
+  -- Proto UTF-8 strings
+  let es := Proto.EchoStatus.encode { code := 2, message := "☺" }
+  let esd ← IO.ofExcept (Proto.EchoStatus.decode es)
+  if esd.message != "☺" then throw (IO.userError "echo utf8")
+
+  -- GCP allowlist non-empty
+  if Grpc.Gcp.deferredCases.isEmpty then throw (IO.userError "gcp allowlist")
+
   IO.println "grpcTests OK"
