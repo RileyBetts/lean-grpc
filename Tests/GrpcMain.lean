@@ -95,4 +95,17 @@ def main : IO Unit := do
   -- GCP allowlist non-empty
   if Grpc.Gcp.deferredCases.isEmpty then throw (IO.userError "gcp allowlist")
 
+  -- JWT fixture + ORCA + xDS bootstrap
+  let jwt := Grpc.Jwt.fixtureUnsigned "u@example.com"
+  if Grpc.Jwt.usernameFromAuthorization s!"Bearer {jwt}" != "u@example.com" then
+    throw (IO.userError "jwt claim")
+  let orca : Grpc.Orca.Report := { cpuUtilizationMillis := 1, memoryUtilizationMillis := 2 }
+  let orca2 ← IO.ofExcept (Grpc.Orca.Report.decode (Grpc.Orca.Report.encode orca))
+  if orca2 != orca then throw (IO.userError "orca roundtrip")
+  let boot := Grpc.Xds.parseBootstrap "{\"clusters\":{\"c\":[\"127.0.0.1:9\"]}}"
+  let xs ← IO.ofExcept (Grpc.Xds.resolve boot "xds:///c")
+  if xs.size != 1 then throw (IO.userError "xds resolve")
+  let hedge := Grpc.ServiceConfig.parse "{\"hedgingPolicy\":{}}"
+  if hedge.hedging.isNone then throw (IO.userError "hedge parse")
+
   IO.println "grpcTests OK"

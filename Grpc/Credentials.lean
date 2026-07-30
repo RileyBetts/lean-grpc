@@ -29,6 +29,14 @@ def CallCredentials.composite (a b : CallCredentials) : CallCredentials where
 def CallCredentials.jwt (jwt : String) : CallCredentials :=
   accessToken jwt
 
+/-- OAuth2 access-token call creds (same wire form as Bearer). -/
+def CallCredentials.oauth2 (accessToken : String) : CallCredentials :=
+  CallCredentials.accessToken accessToken
+
+/-- Per-RPC creds: apply only for this call (caller passes via Channel.unary metadata / dial). -/
+def CallCredentials.perRpc (token : String) : CallCredentials :=
+  CallCredentials.accessToken token
+
 /-- Dial options combining channel + optional call credentials. -/
 structure DialOptions where
   channel : ChannelCredentials := .insecure

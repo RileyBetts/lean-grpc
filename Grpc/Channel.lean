@@ -16,6 +16,7 @@ import Grpc.Credentials
 import Grpc.Tls
 import Grpc.ServiceConfig
 import Grpc.Retry
+import Grpc.Xds
 
 namespace Grpc
 
@@ -42,10 +43,13 @@ def connectH2c (host : String) (port : UInt16) : IO Channel := do
   let bal ← IO.mkRef (Balancer.create .pickFirst #[{ host, port }])
   return { host, port, conn := r, lastActivityMs := act, balancer := bal }
 
-/-- Dial via resolver + balancer (`dns:///host:port` or `host:port`). -/
+/-- Dial via resolver + balancer (`dns:///host:port`, `host:port`, or `xds:///name`
+    when `LEAN_GRPC_XDS_BOOTSTRAP` is set). -/
 def dial (target : String) (opts : Credentials.DialOptions := {})
     (svc : ServiceConfig.Config := {}) : IO Channel := do
-  let addrs ← Resolver.resolve target
+  let addrs ←
+    if "xds:///".isPrefixOf target then Xds.resolveFromEnv target
+    else Resolver.resolve target
   let policy :=
     if svc.loadBalancingPolicy == "round_robin" then Balancer.Policy.roundRobin
     else Balancer.Policy.pickFirst
@@ -121,9 +125,12 @@ def unary (ch : Channel) (service method : String) (request : ByteArray)
   if let some creds := ch.callCreds then
     md ← creds.apply md
   let maxAttempts :=
-    match ch.serviceConfig.retry with
-    | some p => p.maxAttempts
-    | none => 1
+    match ch.serviceConfig.hedging with
+    | some h => h.maxAttempts
+    | none =>
+      match ch.serviceConfig.retry with
+      | some p => p.maxAttempts
+      | none => 1
   let mut attempt : Nat := 0
   let mut last : CallResult :=
     { status := Status.unavailable "no attempt", message := ByteArray.empty, headers := #[], trailers := #[] }
@@ -148,15 +155,25 @@ def unary (ch : Channel) (service method : String) (request : ByteArray)
         else res
       | none => res
     last := res
-    match ch.serviceConfig.retry with
-    | some policy =>
-      if Retry.shouldRetry policy res.status.code attempt then
-        IO.sleep (Retry.backoffMs policy attempt).toUInt32
+    if res.status.code == .ok then return last
+    match ch.serviceConfig.hedging with
+    | some hedge =>
+      if attempt + 1 < hedge.maxAttempts &&
+          hedge.nonFatalStatusCodes.any (· == res.status.code.toUInt32) then
+        IO.sleep hedge.hedgingDelayMs.toUInt32
         attempt := attempt + 1
       else
         return last
     | none =>
-      return last
+      match ch.serviceConfig.retry with
+      | some policy =>
+        if Retry.shouldRetry policy res.status.code attempt then
+          IO.sleep (Retry.backoffMs policy attempt).toUInt32
+          attempt := attempt + 1
+        else
+          return last
+      | none =>
+        return last
   return last
 
 /-- Open a bidirectional client stream for `service/method`. -/

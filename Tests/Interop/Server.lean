@@ -52,9 +52,16 @@ def main : IO Unit := do
     -- parse issues with peers that probe accept-encoding on every unary.
     let _ := acceptEnc
     let (initialMd, trailingBin) := echoMd headers
+    let authHdr :=
+      Id.run do
+        for h in headers do
+          let (n, v) := headerAscii h
+          if n == "authorization" then return v
+        return ""
     let mut respHeaders := Grpc.Metadata.http200 ++ initialMd
-    let addTrailing (st : Grpc.Status) : Array Hpack.HeaderField :=
-      let base := Grpc.Metadata.statusHeaders st
+    let addTrailing (st : Grpc.Status) (extra : Array Hpack.HeaderField := #[]) :
+        Array Hpack.HeaderField :=
+      let base := Grpc.Metadata.statusHeaders st ++ extra
       match trailingBin with
       | some h => base.push h
       | none => base
@@ -91,9 +98,29 @@ def main : IO Unit := do
           finished := true
         }
       let body := zeros req.responseSize.toNat
+      let username :=
+        if req.fillUsername then
+          if authHdr.isEmpty then "lean"
+          else Grpc.Jwt.usernameFromAuthorization authHdr
+        else ""
+      let envScope ← IO.getEnv "LEAN_GRPC_OAUTH_SCOPE"
+      let oauthScope :=
+        if req.fillOauthScope then
+          envScope.getD "https://www.googleapis.com/auth/xapi.zoo"
+        else ""
+      let orcaExtra :=
+        if req.orcaPerQueryReport.isEmpty then #[]
+        else
+          match Grpc.Orca.Report.decode req.orcaPerQueryReport with
+          | .ok r => #[Grpc.Orca.trailerField r]
+          | .error _ =>
+            -- Pass through opaque bytes as ORCA trailer.
+            #[⟨Grpc.Metadata.ascii Grpc.Orca.trailerKey,
+               Grpc.Metadata.ascii (Grpc.Metadata.base64Encode req.orcaPerQueryReport)⟩]
       let resp := Proto.SimpleResponse.encode {
         payloadBody := body
-        username := if req.fillUsername then "lean" else ""
+        username
+        oauthScope
       }
       let outAlg :=
         match req.responseCompressed with
@@ -105,7 +132,7 @@ def main : IO Unit := do
       return {
         headers := hdrs
         body := ← Grpc.Message.encodeIO resp outAlg
-        trailers := addTrailing .ok
+        trailers := addTrailing .ok orcaExtra
         finished := true
       }
     | "/grpc.testing.TestService/StreamingOutputCall" =>

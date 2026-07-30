@@ -12,8 +12,10 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           test: false
+      - name: Install OpenSSL headers (TLS proxy)
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
       - name: Build libraries and tests
-        run: lake build bytesTests hpackTests h2Tests grpcTests trailersServer trailersLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary benchSoak h2specServer routeGuideServer routeGuideClient
+        run: lake build bytesTests hpackTests h2Tests grpcTests trailersServer trailersLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary benchSoak opsSmoke h2specServer routeGuideServer routeGuideClient
       - name: Unit tests
         run: |
           ./.lake/build/bin/bytesTests
@@ -32,6 +34,7 @@ jobs:
         run: |
           chmod +x scripts/build_native.sh scripts/gen-test-certs.sh scripts/interop-tls-go-lean.sh
           ./scripts/build_native.sh
+          test -x .lake/build/native/tls_proxy
           export LEAN_GRPC_ZLIB_HELPER="$PWD/.lake/build/native/zlib_helper"
           ./.lake/build/bin/grpcTests
       - name: Lean↔Lean interop cases
@@ -44,18 +47,20 @@ jobs:
                    cancel_after_first_response special_status_message unimplemented_method \
                    unimplemented_service timeout_on_sleeping_server client_compressed_unary \
                    server_compressed_unary client_compressed_streaming server_compressed_streaming \
-                   pick_first_unary; do
+                   pick_first_unary jwt_token_creds oauth2_auth_token per_rpc_creds \
+                   orca_per_rpc xds_static_unary; do
             ./.lake/build/bin/interopClient 127.0.0.1 10000 "$c"
           done
           kill $pid
       - name: TLS ALPN proxy smoke
         run: ./scripts/interop-tls-go-lean.sh
-      - name: Helloworld + RouteGuide + soak
+      - name: Helloworld + ops + RouteGuide + soak
         run: |
           ./.lake/build/bin/helloworldServer &
           pid=$!
           sleep 0.5
           ./.lake/build/bin/helloworldClient 127.0.0.1 50051 World
+          ./.lake/build/bin/opsSmoke 127.0.0.1 50051
           ./.lake/build/bin/benchSoak 127.0.0.1 50051 30
           kill $pid
           ./.lake/build/bin/routeGuideServer &

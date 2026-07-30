@@ -297,4 +297,70 @@ def main (args : List String) : IO Unit := do
     let res ← Grpc.Channel.unary ch2 "grpc.testing.TestService" "EmptyCall" ByteArray.empty
     if res.status.code != .ok then throw (IO.userError "pick_first_unary")
     IO.println "pick_first_unary OK"
+  | "jwt_token_creds" =>
+    let jwt := Grpc.Jwt.fixtureUnsigned "lean-jwt@example.com"
+    let ch2 ← Grpc.Channel.dial s!"{host}:{port}" {
+      call := some (Grpc.Credentials.CallCredentials.jwt jwt)
+    }
+    let req := Proto.SimpleRequest.encode {
+      responseSize := 1, fillUsername := true, payloadBody := zeros 1
+    }
+    let res ← Grpc.Channel.unary ch2 "grpc.testing.TestService" "UnaryCall" req
+    if res.status.code != .ok then throw (IO.userError "jwt status")
+    let resp ← IO.ofExcept (Proto.SimpleResponse.decode res.message)
+    if resp.username != "lean-jwt@example.com" then
+      throw (IO.userError s!"jwt user `{resp.username}`")
+    IO.println "jwt_token_creds OK"
+  | "oauth2_auth_token" =>
+    let ch2 ← Grpc.Channel.dial s!"{host}:{port}" {
+      call := some (Grpc.Credentials.CallCredentials.oauth2 "oauth-fixture-token")
+    }
+    let req := Proto.SimpleRequest.encode {
+      responseSize := 1, fillUsername := true, fillOauthScope := true, payloadBody := zeros 1
+    }
+    let res ← Grpc.Channel.unary ch2 "grpc.testing.TestService" "UnaryCall" req
+    if res.status.code != .ok then throw (IO.userError "oauth status")
+    let resp ← IO.ofExcept (Proto.SimpleResponse.decode res.message)
+    if resp.username != "oauth-fixture-token" then
+      throw (IO.userError s!"oauth user `{resp.username}`")
+    if resp.oauthScope.isEmpty then throw (IO.userError "oauth scope empty")
+    IO.println "oauth2_auth_token OK"
+  | "per_rpc_creds" =>
+    let jwt := Grpc.Jwt.fixtureUnsigned "lean-perrpc@example.com"
+    let md := Grpc.Metadata.empty
+      |> (Grpc.Metadata.add · "authorization" s!"Bearer {jwt}")
+    let req := Proto.SimpleRequest.encode {
+      responseSize := 1, fillUsername := true, payloadBody := zeros 1
+    }
+    let res ← Grpc.Channel.unary ch "grpc.testing.TestService" "UnaryCall" req md
+    if res.status.code != .ok then throw (IO.userError "per_rpc status")
+    let resp ← IO.ofExcept (Proto.SimpleResponse.decode res.message)
+    if resp.username != "lean-perrpc@example.com" then
+      throw (IO.userError s!"per_rpc user `{resp.username}`")
+    IO.println "per_rpc_creds OK"
+  | "orca_per_rpc" =>
+    let report : Grpc.Orca.Report := { cpuUtilizationMillis := 821, memoryUtilizationMillis := 585 }
+    let req := Proto.SimpleRequest.encode {
+      responseSize := 1, payloadBody := zeros 1
+      orcaPerQueryReport := Grpc.Orca.Report.encode report
+    }
+    let res ← Grpc.Channel.unary ch "grpc.testing.TestService" "UnaryCall" req
+    if res.status.code != .ok then throw (IO.userError "orca status")
+    match Grpc.Orca.reportFromTrailer? res.trailers with
+    | none => throw (IO.userError "missing ORCA trailer")
+    | some r =>
+      if r.cpuUtilizationMillis != 821 then throw (IO.userError "orca cpu")
+      if r.memoryUtilizationMillis != 585 then throw (IO.userError "orca mem")
+    IO.println "orca_per_rpc OK"
+  | "xds_static_unary" =>
+    let bootJson := "{\"clusters\":{\"test\":[\"" ++ host ++ ":" ++ toString port.toNat ++ "\"]}}"
+    let boot := Grpc.Xds.parseBootstrap bootJson
+
+    let addrs ← IO.ofExcept (Grpc.Xds.resolve boot "xds:///test")
+    if addrs.isEmpty then throw (IO.userError "xds empty")
+    let a := addrs[0]!
+    let ch2 ← Grpc.Channel.connectH2c a.host a.port
+    let res ← Grpc.Channel.unary ch2 "grpc.testing.TestService" "EmptyCall" ByteArray.empty
+    if res.status.code != .ok then throw (IO.userError "xds unary")
+    IO.println "xds_static_unary OK"
   | other => throw (IO.userError s!"unknown case {other}")

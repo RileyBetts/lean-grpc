@@ -55,6 +55,9 @@ lean_exe benchUnary where
 lean_exe benchSoak where
   root := `Bench.Soak
 
+lean_exe opsSmoke where
+  root := `Tests.OpsSmoke
+
 lean_exe h2specServer where
   root := `Tests.H2specServer
 

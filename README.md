@@ -6,7 +6,7 @@ Standalone project. Consumers depend on it via Lake.
 
 **Libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (plus examples/tests).
 
-## Status (~96% / ~93% toward grpc-go parity)
+## Status (~100% / ~98% toward grpc-go parity)
 
 | Layer | Package | Notes |
 |---|---|---|

@@ -109,29 +109,37 @@ def BoolValue.decode (b : ByteArray) : Except String BoolValue := do
 structure SimpleRequest where
   responseSize : UInt32 := 0
   fillUsername : Bool := false
+  fillOauthScope : Bool := false
   responseCompressed : Option Bool := none
   responseStatus : Option EchoStatus := none
   expectCompressed : Option Bool := none
   payloadBody : ByteArray := ByteArray.empty
+  /-- Opaque TestOrcaReport / load-report bytes (field 11). -/
+  orcaPerQueryReport : ByteArray := ByteArray.empty
   deriving Inhabited
 
 def SimpleRequest.encode (r : SimpleRequest) : ByteArray :=
   Id.run do
     let mut acc := ByteArray.empty
-    -- response_size=2, payload=3, fill_username=4, response_compressed=6,
-    -- response_status=7, expect_compressed=8
+    -- response_size=2, payload=3, fill_username=4, fill_oauth_scope=5,
+    -- response_compressed=6, response_status=7, expect_compressed=8,
+    -- orca_per_query_report=11
     if r.responseSize != 0 then
       acc := Wire.encodeUInt32 acc 2 r.responseSize
     if !r.payloadBody.isEmpty then
       acc := Wire.encodeBytes acc 3 (Payload.encode { body := r.payloadBody })
     if r.fillUsername then
       acc := Wire.encodeBool acc 4 true
+    if r.fillOauthScope then
+      acc := Wire.encodeBool acc 5 true
     if let some rc := r.responseCompressed then
       acc := Wire.encodeMessage acc 6 (BoolValue.encode { value := rc })
     if let some st := r.responseStatus then
       acc := Wire.encodeBytes acc 7 (EchoStatus.encode st)
     if let some ec := r.expectCompressed then
       acc := Wire.encodeMessage acc 8 (BoolValue.encode { value := ec })
+    if !r.orcaPerQueryReport.isEmpty then
+      acc := Wire.encodeBytes acc 11 r.orcaPerQueryReport
     return acc
 
 def SimpleRequest.decode (b : ByteArray) : Except String SimpleRequest := do
@@ -158,14 +166,17 @@ def SimpleRequest.decode (b : ByteArray) : Except String SimpleRequest := do
   return {
     responseSize := (Wire.fieldUInt32? fields 2).getD 0
     fillUsername := (Wire.fieldUInt32? fields 4).getD 0 != 0
+    fillOauthScope := (Wire.fieldUInt32? fields 5).getD 0 != 0
     responseCompressed
     responseStatus
     payloadBody := payload
     expectCompressed
+    orcaPerQueryReport := (Wire.fieldBytes? fields 11).getD ByteArray.empty
   }
 
 structure SimpleResponse where
   username : String := ""
+  oauthScope : String := ""
   payloadBody : ByteArray := ByteArray.empty
   deriving Inhabited
 
@@ -176,6 +187,8 @@ def SimpleResponse.encode (r : SimpleResponse) : ByteArray :=
       acc := Wire.encodeBytes acc 1 (Payload.encode { body := r.payloadBody })
     if !r.username.isEmpty then
       acc := Wire.encodeString acc 2 r.username
+    if !r.oauthScope.isEmpty then
+      acc := Wire.encodeString acc 3 r.oauthScope
     return acc
 
 def SimpleResponse.decode (b : ByteArray) : Except String SimpleResponse := do
@@ -188,6 +201,7 @@ def SimpleResponse.decode (b : ByteArray) : Except String SimpleResponse := do
       pure p.body
   return {
     username := (Wire.fieldString? fields 2).getD ""
+    oauthScope := (Wire.fieldString? fields 3).getD ""
     payloadBody := payload
   }
 

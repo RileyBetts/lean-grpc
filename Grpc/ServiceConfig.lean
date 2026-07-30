@@ -12,9 +12,16 @@ structure RetryPolicy where
   retryableStatusCodes : Array UInt32 := #[14] -- UNAVAILABLE
   deriving Inhabited
 
+structure HedgingPolicy where
+  maxAttempts : Nat := 2
+  hedgingDelayMs : Nat := 10
+  nonFatalStatusCodes : Array UInt32 := #[14]
+  deriving Inhabited
+
 structure Config where
   timeoutMs : Option Nat := none
   retry : Option RetryPolicy := none
+  hedging : Option HedgingPolicy := none
   loadBalancingPolicy : String := "pick_first"
   deriving Inhabited
 
@@ -29,6 +36,8 @@ def parse (json : String) : Config :=
       cfg := { cfg with loadBalancingPolicy := "pick_first" }
     if json.contains "retryPolicy" || json.contains "maxAttempts" then
       cfg := { cfg with retry := some {} }
+    if json.contains "hedgingPolicy" then
+      cfg := { cfg with hedging := some {} }
     -- timeout like "1s" / "100m"
     let mut i := 0
     let cs := json.toList.toArray

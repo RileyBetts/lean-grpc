@@ -24,7 +24,10 @@ import Grpc.Health
 import Grpc.Reflection
 import Grpc.Channelz
 import Grpc.Gcp
+import Grpc.Jwt
+import Grpc.Orca
+import Grpc.Xds
 
 namespace Grpc
-def version : String := "0.3.0"
+def version : String := "0.4.0"
 end Grpc
