@@ -13,6 +13,8 @@ CASES=(
 GOBIN="${GOBIN:-$(go env GOPATH)/bin}"
 
 cd "$ROOT"
+./scripts/build_native.sh || true
+export LEAN_GRPC_ZLIB_HELPER="${LEAN_GRPC_ZLIB_HELPER:-$ROOT/.lake/build/native/zlib_helper}"
 if [[ ! -x "$GOBIN/server" ]]; then
   go install google.golang.org/grpc/interop/server@latest
 fi

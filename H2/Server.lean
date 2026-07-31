@@ -11,6 +11,7 @@ import Bytes.BE
 import H2.Preface
 import H2.Frame
 import H2.Connection
+import H2.Transport
 
 open Std.Async
 open Std.Net
@@ -43,18 +44,18 @@ private def parseAddr (host : String) (port : UInt16) : IO SocketAddress := do
   | none =>
     return .v4 { addr := IPv4Addr.ofParts 127 0 0 1, port }
 
-def sendFrames (sock : TCP.Socket.Client) (frames : Array Frame) : IO Unit := do
+def sendFrames (t : ByteTransport) (frames : Array Frame) : IO Unit := do
   for f in frames do
-    (sock.send (Frame.encode f)).block
+    t.send (Frame.encode f)
 
 /-- Read until we have at least `n` bytes; returns exactly `n` bytes and any leftover. -/
-partial def recvExact (sock : TCP.Socket.Client) (need : Nat) (acc : ByteArray := ByteArray.empty) :
+partial def recvExact (t : ByteTransport) (need : Nat) (acc : ByteArray := ByteArray.empty) :
     IO (ByteArray × ByteArray) := do
   if acc.size ≥ need then
     return (acc.extract 0 need, acc.extract need acc.size)
-  match (← (sock.recv? 65536).block) with
+  match (← t.recv? 65536) with
   | none => throw (IO.userError "EOF")
-  | some chunk => recvExact sock need (Bytes.Pool.pushBytes acc chunk)
+  | some chunk => recvExact t need (Bytes.Pool.pushBytes acc chunk)
 
 /-- Build response HEADERS frames only; DATA is queued via `queueSend` for flow control. -/
 def responseHeaderFrames (streamId : UInt32) (headers : Array Hpack.HeaderField)
@@ -67,13 +68,13 @@ def responseHeaderFrames (streamId : UInt32) (headers : Array Hpack.HeaderField)
     return #[Frame.headers streamId hdrBlock endOnHeaders true]
 
 /-- Drain buffered reads into frames and handle them. -/
-partial def processBuffer (sock : TCP.Socket.Client) (st : ConnState) (buf : ByteArray)
+partial def processBuffer (t : ByteTransport) (st : ConnState) (buf : ByteArray)
     (handler : StreamHandler) : IO (ConnState × ByteArray) := do
   let (frames, consumed) ←
     match decodeFrames (Bytes.Slice.ofByteArray buf) st.ourSettings.maxFrameSize.toNat with
     | .error e =>
       if e.startsWith "frame too large" then
-        sendFrames sock #[Frame.goAway st.lastPeerStreamId 0x6] -- FRAME_SIZE_ERROR
+        sendFrames t #[Frame.goAway st.lastPeerStreamId 0x6] -- FRAME_SIZE_ERROR
         return ({ st with wentAway := true }, ByteArray.empty)
       else throw (IO.userError e)
     | .ok x => pure x
@@ -126,32 +127,32 @@ partial def processBuffer (sock : TCP.Socket.Client) (st : ConnState) (buf : Byt
               dataBuf := if resp.finished then ByteArray.empty else s.dataBuf
               trailersBuf := if resp.finished then ByteArray.empty else s.trailersBuf }
             st := st.upsertStream s
-  sendFrames sock replies
+  sendFrames t replies
   let rest := buf.extract consumed buf.size
   return (st, rest)
 
-/-- Serve one accepted TCP client as h2c prior-knowledge. -/
-partial def serveConn (sock : TCP.Socket.Client) (handler : StreamHandler) : IO Unit := do
-  let (preface, leftover) ← recvExact sock clientPreface.size
+/-- Serve one accepted client as h2c prior-knowledge (or TLS already terminated). -/
+partial def serveConn (t : ByteTransport) (handler : StreamHandler) : IO Unit := do
+  let (preface, leftover) ← recvExact t clientPreface.size
   if preface != clientPreface then
     throw (IO.userError s!"bad client preface got={Bytes.BE.hexDump (Bytes.Slice.ofByteArray preface)}")
   let mut st := ConnState.create
-  sendFrames sock #[Frame.settings #[
+  sendFrames t #[Frame.settings #[
     (.initialWindowSize, st.ourSettings.initialWindowSize),
     (.maxConcurrentStreams, st.ourSettings.maxConcurrentStreams),
     (.maxFrameSize, st.ourSettings.maxFrameSize)
   ]]
   let mut buf := leftover
   if buf.size > 0 then
-    let (st', rest) ← processBuffer sock st buf handler
+    let (st', rest) ← processBuffer t st buf handler
     st := st'
     buf := rest
   while !st.wentAway do
-    match (← (sock.recv? 65536).block) with
+    match (← t.recv? 65536) with
     | none => break
     | some chunk =>
       buf := Bytes.Pool.pushBytes buf chunk
-      let (st', rest) ← processBuffer sock st buf handler
+      let (st', rest) ← processBuffer t st buf handler
       st := st'
       buf := rest
 
@@ -166,9 +167,13 @@ partial def listenH2c (cfg : ServerConfig) (handler : StreamHandler) : IO Unit :
     let client ← server.accept.block
     discard <| IO.asTask (prio := .dedicated) do
       try
-        serveConn client handler
+        serveConn (tcpTransport client) handler
       catch e =>
         IO.eprintln s!"conn error: {e}"
+
+/-- Serve using a pre-built transport (e.g. in-process TLS accept). -/
+def serveTransport (t : ByteTransport) (handler : StreamHandler) : IO Unit :=
+  serveConn t handler
 
 namespace Server
 def listen := listenH2c

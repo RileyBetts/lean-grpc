@@ -12,10 +12,10 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           test: false
-      - name: Install OpenSSL headers (TLS proxy)
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Install OpenSSL headers (TLS FFI)
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
       - name: Build libraries and tests
-        run: lake build bytesTests hpackTests h2Tests grpcTests trailersServer trailersLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary benchSoak opsSmoke h2specServer routeGuideServer routeGuideClient
+        run: lake build bytesTests hpackTests h2Tests grpcTests trailersServer trailersLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary benchSoak opsSmoke h2specServer routeGuideServer routeGuideClient adcSmoke fakeAdsServer
       - name: Unit tests
         run: |
           ./.lake/build/bin/bytesTests
@@ -30,11 +30,12 @@ jobs:
           LEAN_GRPC_OUT=/tmp/lean-grpc-gen ./.lake/build/bin/protoc-gen-lean4-grpc examples/route_guide.proto
           test -f /tmp/lean-grpc-gen/Generated.lean
           grep -q SayHelloRequest /tmp/lean-grpc-gen/Generated.lean
-      - name: Native zlib + TLS proxy
+      - name: Native zlib + TLS
         run: |
-          chmod +x scripts/build_native.sh scripts/gen-test-certs.sh scripts/interop-tls-go-lean.sh
+          chmod +x scripts/build_native.sh scripts/gen-test-certs.sh scripts/interop-tls-go-lean.sh \
+            scripts/fetch-openssl-headers.sh scripts/run-adc-smoke.sh scripts/run-xds-ads-smoke.sh \
+            scripts/mock-adc-server.py
           ./scripts/build_native.sh
-          test -x .lake/build/native/tls_proxy
           export LEAN_GRPC_ZLIB_HELPER="$PWD/.lake/build/native/zlib_helper"
           ./.lake/build/bin/grpcTests
       - name: Lean↔Lean interop cases
@@ -52,8 +53,10 @@ jobs:
             ./.lake/build/bin/interopClient 127.0.0.1 10000 "$c"
           done
           kill $pid
-      - name: TLS ALPN proxy smoke
-        run: ./scripts/interop-tls-go-lean.sh
+      - name: ADC mock smoke
+        run: ./scripts/run-adc-smoke.sh
+      - name: xDS ADS smoke
+        run: ./scripts/run-xds-ads-smoke.sh
       - name: Helloworld + ops + RouteGuide + soak
         run: |
           ./.lake/build/bin/helloworldServer &
@@ -94,10 +97,38 @@ jobs:
         run: |
           chmod +x scripts/interop-go-lean.sh
           GRPC_PORT=10001 ./scripts/interop-go-lean.sh
-      - name: Go client gzip → Lean unary
+      - name: Compression Go↔Lean (gzip codec)
         run: |
-          chmod +x scripts/gzip-go-lean.sh
-          GRPC_PORT=10002 ./scripts/gzip-go-lean.sh
+          chmod +x scripts/interop-compress-go-lean.sh scripts/build_native.sh
+          sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config zlib1g-dev
+          ./scripts/interop-compress-go-lean.sh
+      - name: In-process TLS Lean → Go
+        run: |
+          chmod +x scripts/interop-tls-go-lean.sh scripts/gen-test-certs.sh scripts/fetch-openssl-headers.sh
+          sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+          ./scripts/interop-tls-go-lean.sh
+
+  interop-python:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          test: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build Lean interop binaries
+        run: lake build interopServer interopClient
+      - name: Python client → Lean server
+        run: |
+          chmod +x scripts/run-python-to-lean.sh
+          ./scripts/run-python-to-lean.sh
+      - name: Lean client → Python server
+        run: |
+          chmod +x scripts/interop-lean-python.sh
+          GRPC_PORT=10001 ./scripts/interop-lean-python.sh
 
   h2spec:
     runs-on: ubuntu-latest

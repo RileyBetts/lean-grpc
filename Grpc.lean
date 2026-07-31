@@ -13,6 +13,7 @@ import Grpc.Metadata
 import Grpc.Server
 import Grpc.Client
 import Grpc.Stream
+import Grpc.Native.Tls
 import Grpc.Tls
 import Grpc.Credentials
 import Grpc.Resolver
@@ -23,10 +24,13 @@ import Grpc.Channel
 import Grpc.Health
 import Grpc.Reflection
 import Grpc.Channelz
+import Grpc.Adc
 import Grpc.Gcp
 import Grpc.Jwt
 import Grpc.Orca
 import Grpc.Xds
+import Grpc.Xds.Discovery
+import Grpc.XdsAds
 
 namespace Grpc
 def version : String := "0.4.0"

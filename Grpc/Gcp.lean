@@ -5,35 +5,43 @@ Released under Apache 2.0 license as described in the file LICENSE.
 import Grpc.Credentials
 import Grpc.Metadata
 import Grpc.Xds
+import Grpc.Adc
 
 namespace Grpc.Gcp
 
-/-- Phase 10: GCP-only / control-plane surfaces.
-    Fixture-local pieces are implemented; live GCE/ALTS remain allowlisted. -/
+/-- Remaining live-GCP-only surfaces (ALTS / GCE channel creds). -/
 
 inductive AllowlistCase where
-  | computeEngineCreds
-  | googleDefaultCredentials
   | computeEngineChannelCredentials
   | alts
   deriving BEq, Repr, Inhabited
 
 def allowlistReason : AllowlistCase → String
-  | .computeEngineCreds => "requires GCE metadata server / live GCP"
-  | .googleDefaultCredentials => "requires live Application Default Credentials against Google APIs"
-  | .computeEngineChannelCredentials => "requires GCE + TLS channel creds"
+  | .computeEngineChannelCredentials => "requires GCE + ALTS/TLS channel creds combo"
   | .alts => "ALTS is GCP-only transport security"
 
-/-- Still needs a live GCP environment (not fixture-testable here). -/
+/-- Still needs a live GCP transport environment. -/
 def deferredCases : Array AllowlistCase :=
-  #[.computeEngineCreds, .googleDefaultCredentials, .computeEngineChannelCredentials, .alts]
+  #[.computeEngineChannelCredentials, .alts]
 
-/-- ADC call credentials: fixture path injects sentinel; otherwise no-op. -/
-def googleDefaultCallCredentials : Credentials.CallCredentials where
+/-- ADC call credentials: real Bearer via SA JSON or GCE metadata (see `Grpc.Adc`). -/
+def googleDefaultCallCredentials : Credentials.CallCredentials :=
+  Adc.callCredentials
+
+/-- Compute-engine call credentials (metadata server token). -/
+def computeEngineCallCredentials : Credentials.CallCredentials where
   apply := fun md => do
-    match ← IO.getEnv "GOOGLE_APPLICATION_CREDENTIALS" with
-    | some _ => pure (Metadata.add md "x-goog-lean-grpc-adc" "1")
-    | none => pure md
+    Adc.clearCache
+    -- Force metadata path even if GOOGLE_APPLICATION_CREDENTIALS is set.
+    let saved ← IO.getEnv "GOOGLE_APPLICATION_CREDENTIALS"
+    match saved with
+    | some _ =>
+      -- Temporarily unset is not portable; call metadata fetch directly.
+      let tok ← Adc.fetchGceMetadataToken
+      pure (Metadata.add md "authorization" s!"Bearer {tok}")
+    | none =>
+      let tok ← Adc.fetchGceMetadataToken
+      pure (Metadata.add md "authorization" s!"Bearer {tok}")
 
 /-- xDS target parse (static bootstrap resolve via `Grpc.Xds`). -/
 def parseXdsTarget (target : String) : Except String String :=

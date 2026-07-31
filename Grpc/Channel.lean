@@ -17,6 +17,7 @@ import Grpc.Tls
 import Grpc.ServiceConfig
 import Grpc.Retry
 import Grpc.Xds
+import Grpc.XdsAds
 
 namespace Grpc
 
@@ -32,8 +33,15 @@ structure Channel where
   balancer : IO.Ref Balancer.State
   serviceConfig : ServiceConfig.Config := {}
   callCreds : Option Credentials.CallCredentials := none
+  channelCreds : Credentials.ChannelCredentials := .insecure
 
 namespace Channel
+
+private def connectAddr (host : String) (port : UInt16)
+    (creds : Credentials.ChannelCredentials) : IO H2.ClientConn := do
+  match creds with
+  | .insecure => H2.Client.connectH2c host port
+  | .tls cfg => Tls.connectH2 host port cfg
 
 def connectH2c (host : String) (port : UInt16) : IO Channel := do
   let c ← H2.Client.connectH2c host port
@@ -48,7 +56,7 @@ def connectH2c (host : String) (port : UInt16) : IO Channel := do
 def dial (target : String) (opts : Credentials.DialOptions := {})
     (svc : ServiceConfig.Config := {}) : IO Channel := do
   let addrs ←
-    if "xds:///".isPrefixOf target then Xds.resolveFromEnv target
+    if "xds:///".isPrefixOf target then XdsAds.resolveFromEnv target
     else Resolver.resolve target
   let policy :=
     if svc.loadBalancingPolicy == "round_robin" then Balancer.Policy.roundRobin
@@ -59,10 +67,7 @@ def dial (target : String) (opts : Credentials.DialOptions := {})
     match addr? with
     | some a => pure a
     | none => throw (IO.userError "no addresses")
-  let c ←
-    match opts.channel with
-    | .insecure => H2.Client.connectH2c addr.host addr.port
-    | .tls cfg => Tls.connectH2 addr.host addr.port cfg
+  let c ← connectAddr addr.host addr.port opts.channel
   let r ← IO.mkRef (some c)
   let now ← IO.monoMsNow
   let act ← IO.mkRef now
@@ -75,6 +80,7 @@ def dial (target : String) (opts : Credentials.DialOptions := {})
     balancer := balRef
     serviceConfig := svc
     callCreds := opts.call
+    channelCreds := opts.channel
   }
 
 /-- Max wait for PING ACK before GOAWAY (Phase 9 keepalive enforcement). -/
@@ -87,10 +93,10 @@ def get (ch : Channel) : IO H2.ClientConn := do
     let st ← c.state.get
     -- Keepalive enforcement: unanswered PING → GOAWAY and drop connection.
     if st.pendingPingAtMs != 0 && now - st.pendingPingAtMs ≥ pingTimeoutMs then
-      H2.sendFrames c.sock (H2.goAwayFrames st)
+      H2.sendFrames c.transport (H2.goAwayFrames st)
       c.state.set { st with wentAway := true, pendingPing := ByteArray.empty, pendingPingAtMs := 0 }
       ch.conn.set none
-      let c ← H2.Client.connectH2c ch.host ch.port
+      let c ← connectAddr ch.host ch.port ch.channelCreds
       ch.conn.set (some c)
       ch.lastActivityMs.set now
       return c
@@ -98,12 +104,12 @@ def get (ch : Channel) : IO H2.ClientConn := do
       let last ← ch.lastActivityMs.get
       if now - last ≥ ch.keepaliveMs && st.pendingPingAtMs == 0 then
         let payload := ByteArray.mk #[1,2,3,4,5,6,7,8]
-        H2.sendFrames c.sock #[H2.Frame.ping payload]
+        H2.sendFrames c.transport #[H2.Frame.ping payload]
         c.state.set { st with pendingPing := payload, pendingPingAtMs := now }
         ch.lastActivityMs.set now
     return c
   | none =>
-    let c ← H2.Client.connectH2c ch.host ch.port
+    let c ← connectAddr ch.host ch.port ch.channelCreds
     ch.conn.set (some c)
     let now ← IO.monoMsNow
     ch.lastActivityMs.set now
@@ -198,7 +204,7 @@ def goAway (ch : Channel) : IO Unit := do
   | none => pure ()
   | some c =>
     let st ← c.state.get
-    H2.sendFrames c.sock (H2.goAwayFrames st)
+    H2.sendFrames c.transport (H2.goAwayFrames st)
     ch.conn.set none
 
 def close (ch : Channel) : IO Unit := do

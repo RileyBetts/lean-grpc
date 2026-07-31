@@ -3,5 +3,7 @@
 *.ilean
 *.c.o
 __pycache__/
+.venv-interop/
 .DS_Store
 /examples/generated/
+.lake/deps/

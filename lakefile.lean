@@ -4,17 +4,41 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Lake
 open Lake DSL
+open System
 
 package «lean-grpc» where
   version := v!"0.1.0"
   keywords := #["grpc", "http2", "hpack", "protobuf", "networking"]
   description := "Pure Lean 4 gRPC stack (HTTP/2 + HPACK + gRPC) on Std.Async"
+  moreLinkArgs := #["-lssl", "-lcrypto", "-lz"]
+
+target tls_ffi.o pkg : FilePath := do
+  let oFile := pkg.buildDir / "native" / "tls_ffi.o"
+  let srcJob ← inputTextFile <| pkg.dir / "native" / "tls_ffi.c"
+  let leanInc ← getLeanIncludeDir
+  let mut incArgs : Array String := #["-fPIC", "-O2", "-I", leanInc.toString]
+  let opensslCflags ← IO.Process.output { cmd := "pkg-config", args := #["--cflags", "openssl"] }
+  if opensslCflags.exitCode == 0 then
+    for a in (opensslCflags.stdout.splitOn " ").filter (· ≠ "") do
+      incArgs := incArgs.push a
+  else
+    let localInc := pkg.dir / ".lake" / "deps" / "openssl-3.0.13" / "include"
+    if ← localInc.pathExists then
+      incArgs := incArgs.push "-I" |>.push localInc.toString
+  buildO oFile srcJob #[] incArgs
+
+target zlib_bridge.o pkg : FilePath := do
+  let oFile := pkg.buildDir / "native" / "zlib_bridge.o"
+  let srcJob ← inputTextFile <| pkg.dir / "native" / "zlib_bridge.c"
+  buildO oFile srcJob #[] #["-fPIC", "-O2"]
 
 lean_lib Bytes
 lean_lib Hpack
 lean_lib H2
 lean_lib Proto
-lean_lib Grpc
+/-- Native TLS/zlib objects linked once via Grpc dependents. -/
+lean_lib Grpc where
+  moreLinkObjs := #[tls_ffi.o, zlib_bridge.o]
 
 @[default_target]
 lean_lib LeanGrpc
@@ -70,3 +94,9 @@ lean_exe routeGuideClient where
 lean_exe protocGenLean4Grpc where
   root := `Grpc.Codegen.Plugin
   exeName := "protoc-gen-lean4-grpc"
+
+lean_exe fakeAdsServer where
+  root := `Tests.FakeAdsServer
+
+lean_exe adcSmoke where
+  root := `Tests.AdcSmoke

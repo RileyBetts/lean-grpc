@@ -11,6 +11,7 @@ import H2.Preface
 import H2.Frame
 import H2.Connection
 import H2.Server
+import H2.Transport
 
 open Std.Async
 open Std.Net
@@ -18,7 +19,7 @@ open Std.Net
 namespace H2
 
 structure ClientConn where
-  sock : TCP.Socket.Client
+  transport : ByteTransport
   state : IO.Ref ConnState
   readBuf : IO.Ref ByteArray
 
@@ -30,16 +31,11 @@ structure Response where
 
 namespace Client
 
-def connectH2c (host : String) (port : UInt16) : IO ClientConn := do
-  let sock ← TCP.Socket.Client.mk
-  let addr ←
-    match IPv4Addr.ofString host with
-    | some a => pure (SocketAddress.v4 { addr := a, port })
-    | none => pure (SocketAddress.v4 { addr := IPv4Addr.ofParts 127 0 0 1, port })
-  (sock.connect addr).block
-  (sock.send clientPreface).block
+/-- Finish HTTP/2 client preface + settings exchange on an already-connected transport. -/
+def connectTransport (t : ByteTransport) : IO ClientConn := do
+  t.send clientPreface
   let st := ConnState.create (isServer := false)
-  sendFrames sock #[Frame.settings #[
+  sendFrames t #[Frame.settings #[
     (.initialWindowSize, st.ourSettings.initialWindowSize),
     (.maxFrameSize, st.ourSettings.maxFrameSize)
   ]]
@@ -48,7 +44,7 @@ def connectH2c (host : String) (port : UInt16) : IO ClientConn := do
   let mut buf := ByteArray.empty
   let mut gotSettings := false
   for _ in [:20] do
-    match (← (sock.recv? 65536).block) with
+    match (← t.recv? 65536) with
     | none => break
     | some chunk =>
       buf := Bytes.Pool.pushBytes buf chunk
@@ -60,14 +56,24 @@ def connectH2c (host : String) (port : UInt16) : IO ClientConn := do
       for f in frames do
         let (st', outs) ← IO.ofExcept (handleFrame st f)
         st := st'
-        sendFrames sock outs
+        sendFrames t outs
+        -- SETTINGS ACK is already emitted by `handleFrame`; do not send a second ACK
+        -- (grpc C-core / Python rejects unexpected SETTINGS ACKs with GOAWAY).
         if f.type == .settings && !(Flags.has f.flags Flags.ack) then
           gotSettings := true
-          sendFrames sock #[Frame.settingsAck]
       state.set st
       if gotSettings then break
   readBuf.set buf
-  return { sock, state, readBuf }
+  return { transport := t, state, readBuf }
+
+def connectH2c (host : String) (port : UInt16) : IO ClientConn := do
+  let sock ← TCP.Socket.Client.mk
+  let addr ←
+    match IPv4Addr.ofString host with
+    | some a => pure (SocketAddress.v4 { addr := a, port })
+    | none => pure (SocketAddress.v4 { addr := IPv4Addr.ofParts 127 0 0 1, port })
+  (sock.connect addr).block
+  connectTransport (tcpTransport sock)
 
 /-- Start a new request stream; returns stream id.
     When `endStream = false`, headers are sent and the stream stays open for DATA. -/
@@ -84,15 +90,15 @@ def startRequest (c : ClientConn) (headers : Array Hpack.HeaderField) (body : By
   -- Peers such as grpc-go FullDuplex empty_stream expect END_STREAM on DATA,
   -- not on the initial HEADERS, when the request body is empty.
   if body.size == 0 && endStream then
-    sendFrames c.sock #[
+    sendFrames c.transport #[
       Frame.headers sid block false true,
       Frame.data sid ByteArray.empty true
     ]
   else if body.size == 0 && !endStream then
-    sendFrames c.sock #[Frame.headers sid block false true]
+    sendFrames c.transport #[Frame.headers sid block false true]
   else
-    sendFrames c.sock #[Frame.headers sid block false true]
-    sendFrames c.sock (Frame.dataFragmented sid body endStream st.ourSettings.maxFrameSize.toNat)
+    sendFrames c.transport #[Frame.headers sid block false true]
+    sendFrames c.transport (Frame.dataFragmented sid body endStream st.ourSettings.maxFrameSize.toNat)
   return sid
 
 /-- Wait for response headers + data + optional trailers.
@@ -103,7 +109,7 @@ partial def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 20
   if let some ms := deadlineMs? then
     let now ← IO.monoMsNow
     if now - t0 ≥ ms then
-      sendFrames c.sock #[Frame.rstStream streamId 0x8]
+      sendFrames c.transport #[Frame.rstStream streamId 0x8]
       throw (IO.userError "DEADLINE_EXCEEDED")
   let st ← c.state.get
   if let some s := st.getStream streamId then
@@ -115,7 +121,7 @@ partial def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 20
           trailers := s.decodedTrailers
           data := s.dataBuf
         }
-  match (← (c.sock.recv? 65536).block) with
+  match (← c.transport.recv? 65536) with
   | none => throw (IO.userError "EOF")
   | some chunk =>
     let mut buf ← c.readBuf.get
@@ -128,7 +134,7 @@ partial def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 20
     for f in frames do
       let (st', outs) ← IO.ofExcept (handleFrame st f)
       st := st'
-      sendFrames c.sock outs
+      sendFrames c.transport outs
     c.state.set st
     awaitResponse c streamId (fuel - 1) deadlineMs? t0
 
@@ -152,7 +158,7 @@ def unary (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray
 
 /-- Send RST_STREAM to cancel a stream. -/
 def resetStream (c : ClientConn) (streamId : UInt32) (errorCode : UInt32 := 0x8) : IO Unit := do
-  sendFrames c.sock #[Frame.rstStream streamId errorCode]
+  sendFrames c.transport #[Frame.rstStream streamId errorCode]
 
 end Client
 end H2

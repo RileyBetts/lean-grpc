@@ -1,12 +1,38 @@
 # TLS + ALPN for lean-grpc
 
-Pure-Lean TLS is **Phase 7** and not implemented yet.
+## Default: in-process OpenSSL
 
-## Recommended production pattern
+`Grpc.Tls.connectH2` / `serveH2` use the native OpenSSL bridge (`native/tls_ffi.c`) for ALPN `h2`:
 
-1. Run Lean gRPC with **h2c** on `127.0.0.1` only (e.g. port `50051`).
-2. Put Envoy / Caddy / nginx in front with TLS and ALPN `h2`.
-3. Proxy HTTP/2 to the local Lean listener.
+```lean
+let ch ← Grpc.Channel.dial "api.example.com:443" {
+  channel := .tls {
+    caPath := some "/etc/ssl/certs/ca.pem"
+    serverName := some "api.example.com"
+  }
+}
+```
+
+Server with certs:
+
+```lean
+Grpc.Tls.serveH2 {
+  certPath := some "server.pem"
+  keyPath := some "server.key"
+} h2cfg handler
+```
+
+Interop: `./scripts/interop-tls-go-lean.sh` (Lean client → Go TLS server, **no** `LEAN_GRPC_TLS_PROXY`).
+
+Build needs OpenSSL headers (`libssl-dev`, or `./scripts/fetch-openssl-headers.sh` when headers are missing).
+
+## Optional sidecar (Envoy / Caddy / `tls_proxy`)
+
+Still supported:
+
+1. Run Lean gRPC with **h2c** on `127.0.0.1` only.
+2. Put Envoy / Caddy / `native/tls_proxy` in front with TLS and ALPN `h2`.
+3. Or set `LEAN_GRPC_TLS_PROXY=host:port` so the Lean client dials h2c to the local terminator.
 
 ### Envoy sketch
 
@@ -38,23 +64,8 @@ static_resources:
               routes:
               - match: { prefix: "/" }
                 route: { cluster: lean_grpc }
-          http_filters:
-          - name: envoy.filters.http.router
-  clusters:
-  - name: lean_grpc
-    type: STATIC
-    typed_extension_protocol_options:
-      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
-        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
-        explicit_http_config:
-          http2_protocol_options: {}
-    load_assignment:
-      cluster_name: lean_grpc
-      endpoints:
-      - lb_endpoints:
-        - endpoint:
-            address:
-              socket_address: { address: 127.0.0.1, port_value: 50051 }
 ```
 
-When a Lean TLS stack with ALPN appears, wire `Grpc.Tls.connectH2` / `serveH2` without changing application handlers.
+## Dev fallback
+
+`LEAN_GRPC_TLS_INSECURE_FALLBACK=1` forces plain h2c (never use in production).

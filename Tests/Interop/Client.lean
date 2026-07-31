@@ -22,6 +22,20 @@ def main (args : List String) : IO Unit := do
   let host := args[0]?.getD "127.0.0.1"
   let port := (args[1]?.getD "10000").toNat?.getD 10000 |>.toUInt16
   let case_ := args[2]?.getD "empty_unary"
+  -- In-process TLS dial (no LEAN_GRPC_TLS_PROXY).
+  if case_ == "tls_empty_unary" then
+    let ca := (← IO.getEnv "LEAN_GRPC_TLS_CA").getD ""
+    let sni := (← IO.getEnv "LEAN_GRPC_TLS_SERVER_NAME").getD host
+    let cfg : Grpc.Tls.Config := {
+      caPath := if ca.isEmpty then none else some ca
+      serverName := some sni
+    }
+    let ch ← Grpc.Channel.dial s!"{host}:{port.toNat}"
+      { channel := .tls cfg, authority := some sni }
+    let res ← Grpc.Channel.unary ch "grpc.testing.TestService" "EmptyCall" ByteArray.empty
+    if res.status.code != .ok then throw (IO.userError s!"tls_empty_unary {res.status.message}")
+    IO.println "tls_empty_unary OK"
+    return
   let ch ← Grpc.Channel.connectH2c host port
   match case_ with
   | "empty_unary" =>
@@ -253,7 +267,7 @@ def main (args : List String) : IO Unit := do
         return ""
     if badSt != "3" then
       IO.eprintln s!"warn: streaming expect_compressed probe got {badSt} (continue)"
-    -- Compressed then uncompressed payloads
+    -- Compressed then uncompressed payloads (grpc-encoding required for peer gzip).
     let mut body2 := ByteArray.empty
     body2 := Bytes.Pool.pushBytes body2 (← Grpc.Message.encodeIO (
       Proto.StreamingInputCallRequest.encode {
@@ -263,8 +277,12 @@ def main (args : List String) : IO Unit := do
       Proto.StreamingInputCallRequest.encode {
         payloadBody := zeros 45904, expectCompressed := some false
       }))
-    let ok ← H2.Client.unary c headers body2
-    let payloads ← IO.ofExcept (Grpc.Message.decodeAll (Bytes.Slice.ofByteArray ok.data))
+    let headersGz := headers.push (Grpc.Metadata.grpcEncoding "gzip")
+    let ok ← H2.Client.unary c headersGz body2
+    let payloads ←
+      match ← Grpc.Message.decodeAllIO (Bytes.Slice.ofByteArray ok.data) with
+      | .ok ps => pure ps
+      | .error e => throw (IO.userError e)
     let r ← IO.ofExcept (Proto.StreamingInputCallResponse.decode (payloads.getD 0 ByteArray.empty))
     if r.aggregatedPayloadSize != (27182 + 45904).toUInt32 then
       throw (IO.userError s!"agg {r.aggregatedPayloadSize}")
@@ -363,4 +381,15 @@ def main (args : List String) : IO Unit := do
     let res ← Grpc.Channel.unary ch2 "grpc.testing.TestService" "EmptyCall" ByteArray.empty
     if res.status.code != .ok then throw (IO.userError "xds unary")
     IO.println "xds_static_unary OK"
+  | "xds_ads_unary" =>
+    -- Expect FakeAds on LEAN_GRPC_FAKE_ADS (default 127.0.0.1:18000) pointing at this host:port.
+    let adsTarget := (← IO.getEnv "LEAN_GRPC_FAKE_ADS").getD "127.0.0.1:18000"
+    let adsAddr ← IO.ofExcept (Grpc.Resolver.parseTarget adsTarget)
+    let addrs ← Grpc.XdsAds.fetchViaAds adsAddr "test"
+    if addrs.isEmpty then throw (IO.userError "ads empty")
+    let a := addrs[0]!
+    let ch2 ← Grpc.Channel.connectH2c a.host a.port
+    let res ← Grpc.Channel.unary ch2 "grpc.testing.TestService" "EmptyCall" ByteArray.empty
+    if res.status.code != .ok then throw (IO.userError "ads unary")
+    IO.println "xds_ads_unary OK"
   | other => throw (IO.userError s!"unknown case {other}")
