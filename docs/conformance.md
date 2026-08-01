@@ -2,9 +2,19 @@
 
 **Target:** near [grpc-go / official interop](https://github.com/grpc/grpc/blob/master/doc/interop-test-descriptions.md) parity (Phases 1–9 hard; ALTS allowlisted).
 
+## Overall estimates (judgment, not a formal audit)
+
+| Axis | Implemented | Tested | Notes |
+|---|---:|---:|---|
+| Official gRPC standard (PROTOCOL-HTTP2 + core RPC) | **~95%** | **~90%** | Core wire solid; gaps: full `cacheable_unary` (needs caching proxy), HTTP CONNECT out of scope, some duplex still buffered-batch |
+| vs grpc-go app surface | **~93%** | **~88%** | Strong general-app parity; ALTS/GCE allowlisted; grpclb thin; binary-log/stats/interceptors shallower than grpc-go; hedge race cautious |
+| vs Python (grpcio) peer surface | **~92%** | **~82%** | Shared wire covered both ways; no Python stress demo yet; fewer chaos/negative cases than Go |
+
+Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, cancel timing) and **cloud-live** paths (ADC/ALTS/xDS against real infra), not missing basic RPCs. Stress demos found two such bugs (gzip stream decode; bidi empty `END_STREAM`); FramingMatrix + `run-stress-demos.sh` now hard-gate those classes.
+
 | Metric | Score |
 |---|---|
-| vs grpc-go app surfaces | **~100 implemented / ~99.5 tested** |
+| vs grpc-go app surfaces | **~93% implemented / ~88% tested** (see table above) |
 | h2spec | **145/146 pass, 1 skipped** (full suite hard CI; skip is h2spec suite skip, not an allowlisted failure) |
 | Official non-auth interop | Lean↔Lean; **Go↔Lean**; **Python↔Lean** (CI) |
 | Stress demos + framing matrix | **Hard CI** (`scripts/run-stress-demos.sh`): VaultGauntlet, MirrorForge, SignalWeave, FramingMatrix |
