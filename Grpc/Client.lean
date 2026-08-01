@@ -114,7 +114,8 @@ def finishUnary (c : H2.ClientConn) (streamId : UInt32) (deadlineMs? : Option Na
           if let some a := Compression.Algorithm.parse? v then return a
       return Compression.Algorithm.gzip
   let payloads ←
-    match ← Message.decodeAllIO (Bytes.Slice.ofByteArray resp.data) true respAlg with
+    match ← Message.decodeAllIO (Bytes.Slice.ofByteArray resp.data) true respAlg
+        Message.defaultMaxMsgSize with
     | .ok ps => pure ps
     | .error _ => pure #[]
   let message := payloads.getD 0 ByteArray.empty

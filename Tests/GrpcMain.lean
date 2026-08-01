@@ -322,7 +322,10 @@ def main (args : List String) : IO Unit := do
   let envOut ← IO.Process.output {
     cmd := selfPath.toString
     args := #["--resolver-env-check"]
-    env := #[("LEAN_GRPC_RESOLVE_ADDRS", some "10.9.0.1:9001, 10.9.0.2:9002")]
+    env := #[
+      ("LEAN_GRPC_RESOLVE_ADDRS", some "10.9.0.1:9001, 10.9.0.2:9002"),
+      ("LEAN_GRPC_ALLOW_RESOLVE_OVERRIDE", some "1")
+    ]
   }
   if envOut.exitCode != 0 then
     throw (IO.userError s!"resolver env override subprocess failed: {envOut.stderr}")

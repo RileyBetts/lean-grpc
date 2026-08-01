@@ -82,6 +82,7 @@ int main(int argc, char **argv) {
   SSL_CTX_set_alpn_select_cb(ctx, alpn_select, NULL);
   if (SSL_CTX_use_certificate_file(ctx, argv[3], SSL_FILETYPE_PEM) != 1) return 1;
   if (SSL_CTX_use_PrivateKey_file(ctx, argv[4], SSL_FILETYPE_PEM) != 1) return 1;
+  if (SSL_CTX_check_private_key(ctx) != 1) return 1;
 
   int ls = socket(AF_INET, SOCK_STREAM, 0);
   int yes = 1;
@@ -93,12 +94,18 @@ int main(int argc, char **argv) {
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) < 0) return 1;
   if (listen(ls, 16) < 0) return 1;
-  fprintf(stderr, "tls_proxy listening on %d → h2c %d\n", listen_port, backend_port);
+  /* Legacy sidecar helper — prefer in-process TLS (Grpc.Tls.serveH2). */
+  fprintf(stderr, "tls_proxy (legacy) listening on 127.0.0.1:%d → h2c %d\n",
+          listen_port, backend_port);
 
   for (;;) {
     int cfd = accept(ls, NULL, NULL);
     if (cfd < 0) continue;
     SSL *ssl = SSL_new(ctx);
+    if (!ssl) {
+      close(cfd);
+      continue;
+    }
     SSL_set_fd(ssl, cfd);
     if (SSL_accept(ssl) != 1) {
       SSL_free(ssl);
@@ -112,12 +119,35 @@ int main(int argc, char **argv) {
       continue;
     }
     struct Relay *r = (struct Relay *)malloc(sizeof(*r));
+    if (!r) {
+      SSL_free(ssl);
+      close(cfd);
+      close(backend);
+      continue;
+    }
     r->ssl = ssl;
     r->backend = backend;
     pthread_t t1, t2;
-    pthread_create(&t1, NULL, ssl_to_backend, r);
-    pthread_create(&t2, NULL, backend_to_ssl, r);
-    pthread_detach(t1);
-    pthread_detach(t2);
+    if (pthread_create(&t1, NULL, ssl_to_backend, r) != 0) {
+      free(r);
+      SSL_free(ssl);
+      close(cfd);
+      close(backend);
+      continue;
+    }
+    if (pthread_create(&t2, NULL, backend_to_ssl, r) != 0) {
+      pthread_join(t1, NULL);
+      free(r);
+      SSL_free(ssl);
+      close(cfd);
+      close(backend);
+      continue;
+    }
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    SSL_free(ssl);
+    close(cfd);
+    close(backend);
+    free(r);
   }
 }

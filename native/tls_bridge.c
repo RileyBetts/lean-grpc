@@ -27,11 +27,18 @@ SSL_CTX *lean_grpc_tls_client_ctx(const char *ca_file) {
   SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
   SSL_CTX_set_alpn_protos(ctx, (const unsigned char *)"\x02h2", 3);
   if (ca_file && ca_file[0]) {
-    if (!SSL_CTX_load_verify_locations(ctx, ca_file, NULL))
+    if (!SSL_CTX_load_verify_locations(ctx, ca_file, NULL)) {
+      SSL_CTX_free(ctx);
       return NULL;
+    }
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
   } else {
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    /* Empty ca_file: system trust store (callers that need skip-verify must set VERIFY_NONE). */
+    if (!SSL_CTX_set_default_verify_paths(ctx)) {
+      SSL_CTX_free(ctx);
+      return NULL;
+    }
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
   }
   return ctx;
 }
@@ -43,8 +50,13 @@ SSL *lean_grpc_tls_connect_fd(SSL_CTX *ctx, int fd, const char *server_name) {
   if (!ssl)
     return NULL;
   SSL_set_fd(ssl, fd);
-  if (server_name && server_name[0])
+  if (server_name && server_name[0]) {
     SSL_set_tlsext_host_name(ssl, server_name);
+    if (SSL_set1_host(ssl, server_name) != 1) {
+      SSL_free(ssl);
+      return NULL;
+    }
+  }
   if (SSL_connect(ssl) != 1) {
     SSL_free(ssl);
     return NULL;

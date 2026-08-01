@@ -41,12 +41,19 @@ ZBuf lean_grpc_gzip_compress(const uint8_t *in, size_t in_len) {
   return b;
 }
 
-ZBuf lean_grpc_gzip_decompress(const uint8_t *in, size_t in_len) {
+/* Decompress gzip. `max_out` caps uncompressed size (0 = default 4 MiB). */
+ZBuf lean_grpc_gzip_decompress(const uint8_t *in, size_t in_len, size_t max_out) {
+  if (max_out == 0)
+    max_out = 4u * 1024u * 1024u;
   z_stream strm;
   memset(&strm, 0, sizeof(strm));
   if (inflateInit2(&strm, 15 + 16) != Z_OK)
     return zbuf_fail();
   size_t cap = in_len * 4 + 64;
+  if (cap > max_out)
+    cap = max_out;
+  if (cap == 0)
+    cap = 64;
   uint8_t *out = (uint8_t *)malloc(cap);
   if (!out) {
     inflateEnd(&strm);
@@ -67,19 +74,37 @@ ZBuf lean_grpc_gzip_decompress(const uint8_t *in, size_t in_len) {
     }
     if (strm.avail_out == 0) {
       size_t used = cap;
-      cap *= 2;
-      uint8_t *nbuf = (uint8_t *)realloc(out, cap);
+      if (used >= max_out) {
+        free(out);
+        inflateEnd(&strm);
+        return zbuf_fail();
+      }
+      size_t ncap = cap * 2;
+      if (ncap > max_out)
+        ncap = max_out;
+      if (ncap <= used) {
+        free(out);
+        inflateEnd(&strm);
+        return zbuf_fail();
+      }
+      uint8_t *nbuf = (uint8_t *)realloc(out, ncap);
       if (!nbuf) {
         free(out);
         inflateEnd(&strm);
         return zbuf_fail();
       }
       out = nbuf;
+      cap = ncap;
       strm.next_out = out + used;
       strm.avail_out = (uInt)(cap - used);
     }
   }
-  size_t n = cap - strm.avail_out;
+  size_t n = (size_t)strm.total_out;
+  if (n > max_out) {
+    free(out);
+    inflateEnd(&strm);
+    return zbuf_fail();
+  }
   inflateEnd(&strm);
   ZBuf b = {out, n};
   return b;

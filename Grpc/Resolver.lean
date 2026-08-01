@@ -76,20 +76,25 @@ private def resolveMultiIP (host : String) (port : UInt16) : IO (Array Address) 
     return #[]
 
 /-- Deterministic resolver override for tests/CI: `LEAN_GRPC_RESOLVE_ADDRS` is a
-    comma-separated `host:port` list, e.g. `10.0.0.1:50051,10.0.0.2:50051`.
-    Takes priority over both DNS paths when set and non-empty. -/
+    comma-separated `host:port` list. Requires `LEAN_GRPC_ALLOW_RESOLVE_OVERRIDE=1`. -/
 def resolveEnvOverride : IO (Option (Array Address)) := do
   match ← IO.getEnv "LEAN_GRPC_RESOLVE_ADDRS" with
   | none => pure none
   | some s =>
-    let mut addrs : Array Address := #[]
-    for part in s.splitOn "," do
-      let p := trimAsciiWs part
-      if !p.isEmpty then
-        match parseTarget p with
-        | .ok a => addrs := addrs.push a
-        | .error _ => pure ()
-    pure (if addrs.isEmpty then none else some addrs)
+    match ← IO.getEnv "LEAN_GRPC_ALLOW_RESOLVE_OVERRIDE" with
+    | some "1" =>
+      IO.eprintln "WARN: LEAN_GRPC_RESOLVE_ADDRS override active"
+      let mut addrs : Array Address := #[]
+      for part in s.splitOn "," do
+        let p := trimAsciiWs part
+        if !p.isEmpty then
+          match parseTarget p with
+          | .ok a => addrs := addrs.push a
+          | .error _ => pure ()
+      pure (if addrs.isEmpty then none else some addrs)
+    | _ =>
+      IO.eprintln "WARN: LEAN_GRPC_RESOLVE_ADDRS ignored (set LEAN_GRPC_ALLOW_RESOLVE_OVERRIDE=1)"
+      pure none
 
 /-- Resolve a dial target to one or more addresses:
     1. `LEAN_GRPC_RESOLVE_ADDRS` override (deterministic, test-friendly).

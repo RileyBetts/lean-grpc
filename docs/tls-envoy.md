@@ -2,12 +2,14 @@
 
 ## Default: in-process OpenSSL
 
-`Grpc.Tls.connectH2` / `serveH2` use the native OpenSSL bridge (`native/tls_ffi.c`) for ALPN `h2`:
+`Grpc.Tls.connectH2` / `serveH2` use the native OpenSSL bridge (`native/tls_ffi.c`) for ALPN `h2`.
+Empty/`none` `caPath` uses the **system trust store** with hostname verification.
+Use `insecureSkipVerify := true` only for local fixtures (prints a stderr warning).
 
 ```lean
 let ch ← Grpc.Channel.dial "api.example.com:443" {
   channel := .tls {
-    caPath := some "/etc/ssl/certs/ca.pem"
+    caPath := some "/etc/ssl/certs/ca.pem"  -- or none → system CAs
     serverName := some "api.example.com"
   }
 }

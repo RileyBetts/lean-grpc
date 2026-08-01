@@ -10,7 +10,7 @@ typedef struct {
 } ZBuf;
 
 ZBuf lean_grpc_gzip_compress(const uint8_t *in, size_t in_len);
-ZBuf lean_grpc_gzip_decompress(const uint8_t *in, size_t in_len);
+ZBuf lean_grpc_gzip_decompress(const uint8_t *in, size_t in_len, size_t max_out);
 void lean_grpc_zbuf_free(uint8_t *p);
 
 static int read_all(uint8_t **out, size_t *out_len) {
@@ -35,7 +35,7 @@ static int read_all(uint8_t **out, size_t *out_len) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    fprintf(stderr, "usage: zlib_helper compress|decompress\n");
+    fprintf(stderr, "usage: zlib_helper compress|decompress [max_out]\n");
     return 2;
   }
   uint8_t *in = NULL;
@@ -44,9 +44,19 @@ int main(int argc, char **argv) {
   ZBuf z;
   if (strcmp(argv[1], "compress") == 0)
     z = lean_grpc_gzip_compress(in, in_len);
-  else if (strcmp(argv[1], "decompress") == 0)
-    z = lean_grpc_gzip_decompress(in, in_len);
-  else {
+  else if (strcmp(argv[1], "decompress") == 0) {
+    size_t max_out = 4u * 1024u * 1024u;
+    if (argc >= 3) {
+      char *end = NULL;
+      unsigned long v = strtoul(argv[2], &end, 10);
+      if (end && *end == '\0' && v > 0) max_out = (size_t)v;
+    } else if (getenv("LEAN_GRPC_ZLIB_MAX_OUT")) {
+      char *end = NULL;
+      unsigned long v = strtoul(getenv("LEAN_GRPC_ZLIB_MAX_OUT"), &end, 10);
+      if (end && *end == '\0' && v > 0) max_out = (size_t)v;
+    }
+    z = lean_grpc_gzip_decompress(in, in_len, max_out);
+  } else {
     free(in);
     return 2;
   }

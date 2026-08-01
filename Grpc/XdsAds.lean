@@ -9,13 +9,24 @@ import Grpc.Xds.Discovery
 import Grpc.Metadata
 import Grpc.Stream
 import Grpc.Resolver
+import Grpc.Tls
 
 namespace Grpc.XdsAds
 
-private def adsHeaders (host : String) : Array Hpack.HeaderField :=
+/-- Cleartext ADS is allowed only with `LEAN_GRPC_XDS_INSECURE=1` (tests/FakeAds). -/
+private def connectAds (server : Resolver.Address) : IO H2.ClientConn := do
+  match ← IO.getEnv "LEAN_GRPC_XDS_INSECURE" with
+  | some "1" =>
+    IO.eprintln "WARN: LEAN_GRPC_XDS_INSECURE=1 → ADS over cleartext h2c"
+    H2.Client.connectH2c server.host server.port
+  | _ =>
+    -- Default: TLS with system trust store + hostname verify.
+    Grpc.Tls.connectH2 server.host server.port {}
+
+private def adsHeaders (host : String) (useHttps : Bool) : Array Hpack.HeaderField :=
   #[
     Metadata.methodPost,
-    Metadata.schemeHttp,
+    if useHttps then Metadata.schemeHttps else Metadata.schemeHttp,
     ⟨Metadata.ascii ":authority", Metadata.ascii host⟩,
     Metadata.path "envoy.service.discovery.v3.AggregatedDiscoveryService"
       "StreamAggregatedResources",
@@ -23,12 +34,18 @@ private def adsHeaders (host : String) : Array Hpack.HeaderField :=
     Metadata.teTrailers
   ]
 
+private def adsInsecure? : IO Bool := do
+  match ← IO.getEnv "LEAN_GRPC_XDS_INSECURE" with
+  | some "1" => pure true
+  | _ => pure false
+
 /-- ADS client: DiscoveryRequest → DiscoveryResponse over gRPC bidi
     (`AggregatedDiscoveryService/StreamAggregatedResources`).
     Speaks real envoy.service.discovery.v3 protobuf (EDS CLA resources). -/
 def fetchViaAds (server : Resolver.Address) (cluster : String) : IO (Array Resolver.Address) := do
-  let conn ← H2.Client.connectH2c server.host server.port
-  let stream ← Stream.openCall conn (adsHeaders server.host)
+  let conn ← connectAds server
+  let insecure ← adsInsecure?
+  let stream ← Stream.openCall conn (adsHeaders server.host (!insecure))
   let req : Xds.Discovery.Request := {
     resourceNames := #[cluster]
     typeUrl := Xds.edsTypeUrl
@@ -56,8 +73,9 @@ structure Session where
 
 /-- Open a new ADS session against `server`. -/
 def Session.open (server : Resolver.Address) : IO Session := do
-  let conn ← H2.Client.connectH2c server.host server.port
-  let stream ← Stream.openCall conn (adsHeaders server.host)
+  let conn ← connectAds server
+  let insecure ← adsInsecure?
+  let stream ← Stream.openCall conn (adsHeaders server.host (!insecure))
   return { stream, host := server.host }
 
 /-- Send one `DiscoveryRequest` and await its `DiscoveryResponse` on the session stream. -/
@@ -77,7 +95,9 @@ def Session.exchange (s : Session) (req : Xds.Discovery.Request) : IO Xds.Discov
 def Session.fetchTyped (s : Session) (expectedTypeUrl : String) (resourceNames : Array String)
     (version : String := "") : IO (Except String Xds.Discovery.Response) := do
   let resp ← s.exchange { resourceNames, typeUrl := expectedTypeUrl, versionInfo := version }
-  let mismatched := resp.resources.any (fun a => !a.typeUrl.isEmpty && a.typeUrl != expectedTypeUrl)
+  -- Require non-empty matching type_url on every resource (LGSEC-2026-22).
+  let mismatched :=
+    resp.resources.any (fun a => a.typeUrl.isEmpty || a.typeUrl != expectedTypeUrl)
   if mismatched then
     let nack := Xds.Discovery.Request.nack expectedTypeUrl version resp.nonce
       s!"resource type_url mismatch: expected {expectedTypeUrl}" resourceNames

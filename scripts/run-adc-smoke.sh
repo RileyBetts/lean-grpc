@@ -25,6 +25,7 @@ trap 'kill "$pid" 2>/dev/null || true' EXIT
 sleep 0.3
 
 lake build adcSmoke
+export LEAN_GRPC_ALLOW_ADC_OVERRIDE=1
 export LEAN_GRPC_GCE_METADATA="127.0.0.1:${PORT}"
 export LEAN_GRPC_TOKEN_INSECURE=1
 export LEAN_GRPC_TOKEN_HOST="127.0.0.1:${PORT}"

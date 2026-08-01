@@ -22,6 +22,7 @@ cleanup() { kill "$pid_a" "$pid_b" 2>/dev/null || true; }
 trap cleanup EXIT
 sleep 1.0
 
+export LEAN_GRPC_ALLOW_RESOLVE_OVERRIDE=1
 export LEAN_GRPC_RESOLVE_ADDRS="127.0.0.1:${PORT_A},127.0.0.1:${PORT_B}"
 set +e
 if command -v stdbuf >/dev/null 2>&1; then

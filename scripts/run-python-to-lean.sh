@@ -18,7 +18,7 @@ if [[ ! -d .venv-interop ]]; then
   # shellcheck disable=SC1091
   source .venv-interop/bin/activate
   pip install -q --upgrade pip
-  pip install -q 'grpcio>=1.62' 'grpcio-tools>=1.62' protobuf
+  pip install -q -r python_interop/requirements.txt
 else
   # shellcheck disable=SC1091
   source .venv-interop/bin/activate

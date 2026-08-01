@@ -146,3 +146,6 @@ lean_exe adcSmoke where
 
 lean_exe adcLive where
   root := `Tests.AdcLive
+
+lean_exe securityTests where
+  root := `Tests.SecurityMain

@@ -104,8 +104,12 @@ def handlerFor (s : Server) : H2.StreamHandler := fun _streamId headers data end
       if n == "grpc-timeout" then timeout := v
       if n == "grpc-accept-encoding" then acceptEnc := v
       if n == "grpc-encoding" then reqEnc := v
-    if !(contentType.isEmpty || "application/grpc".isPrefixOf contentType) then
-      -- PROTOCOL-HTTP2: unsupported media type → HTTP 415 (trailers-only style).
+    -- PROTOCOL-HTTP2: require application/grpc with optional +proto/+json (or ;params).
+    let ctOk :=
+      contentType == "application/grpc" ||
+        contentType.startsWith "application/grpc+" ||
+        contentType.startsWith "application/grpc;"
+    if contentType.isEmpty || !ctOk then
       return {
         headers := Metadata.http415
         finished := true
@@ -134,12 +138,17 @@ def handlerFor (s : Server) : H2.StreamHandler := fun _streamId headers data end
       -- client declared via `grpc-encoding` (defaults to gzip when unset/unknown).
       let reqAlg := (Compression.Algorithm.parse? reqEnc).getD .gzip
       let payloads ←
-        match ← Message.decodeAllIO (Bytes.Slice.ofByteArray data) true reqAlg with
+        match ← Message.decodeAllIO (Bytes.Slice.ofByteArray data) true reqAlg s.maxMsgSize with
         | .ok ps => pure ps
         | .error e =>
+          let st :=
+            if e == "decompressed message too large" then
+              Status.resourceExhausted e
+            else
+              Status.internal e
           return {
             headers := Metadata.http200
-            trailers := Metadata.statusHeaders (.internal e)
+            trailers := Metadata.statusHeaders st
             finished := true
           }
       let mut respHeaders := Metadata.http200
@@ -148,12 +157,6 @@ def handlerFor (s : Server) : H2.StreamHandler := fun _streamId headers data end
       match mh with
       | .unary h =>
         let req := payloads.getD 0 ByteArray.empty
-        if req.size > s.maxMsgSize then
-          return {
-            headers := Metadata.http200
-            trailers := Metadata.statusHeaders (.resourceExhausted "message too large")
-            finished := true
-          }
         let (resp, st) ← h req
         let body ←
           if st.code != .ok && resp.isEmpty then pure ByteArray.empty

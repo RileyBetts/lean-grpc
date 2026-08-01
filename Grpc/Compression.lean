@@ -104,8 +104,15 @@ def gzipDecodeStored (data : ByteArray) : Except String ByteArray := do
   if expectCrc != got then throw "crc mismatch"
   return out
 
+/-- True when `p` is an absolute filesystem path (helpers must not resolve via PATH). -/
+def isAbsoluteHelperPath (p : String) : Bool :=
+  p.startsWith "/" ||
+    match p.toList with
+    | _ :: ':' :: _ => true
+    | _ => false
+
 /-- Prefer in-process zlib via `scripts/build_native.sh` helper when
-    `LEAN_GRPC_ZLIB_HELPER` points at a filter binary; else system `gzip`; else stored. -/
+    `LEAN_GRPC_ZLIB_HELPER` points at an absolute filter binary; else system `gzip`; else stored. -/
 private def runFilter (cmd : String) (args : Array String) (payload : ByteArray) : IO (Option ByteArray) := do
   try
     let child ← IO.Process.spawn {
@@ -130,16 +137,27 @@ private def runFilter (cmd : String) (args : Array String) (payload : ByteArray)
 /-- Peer-compatible gzip: zlib helper → system gzip → stored deflate. -/
 def gzipEncodePeer (payload : ByteArray) : IO ByteArray := do
   if let some helper := ← IO.getEnv "LEAN_GRPC_ZLIB_HELPER" then
-    if let some out ← runFilter helper #["compress"] payload then return out
+    if isAbsoluteHelperPath helper then
+      if let some out ← runFilter helper #["compress"] payload then return out
   if let some out ← runFilter "gzip" #["-c", "-n"] payload then return out
   return gzipEncodeStored payload
 
-/-- Peer-compatible gunzip: zlib helper → system gzip -dc → stored decoder. -/
-def gzipDecodePeer (data : ByteArray) : IO (Except String ByteArray) := do
+/-- Peer-compatible gunzip with optional uncompressed size cap (`maxOut`). -/
+def gzipDecodePeer (data : ByteArray) (maxOut : Nat := 4 * 1024 * 1024) :
+    IO (Except String ByteArray) := do
   if let some helper := ← IO.getEnv "LEAN_GRPC_ZLIB_HELPER" then
-    if let some out ← runFilter helper #["decompress"] data then return .ok out
-  if let some out ← runFilter "gzip" #["-dc"] data then return .ok out
-  return gzipDecodeStored data
+    if isAbsoluteHelperPath helper then
+      if let some out ← runFilter helper #["decompress", toString maxOut] data then
+        if out.size > maxOut then return .error "decompressed message too large"
+        return .ok out
+  if let some out ← runFilter "gzip" #["-dc"] data then
+    if out.size > maxOut then return .error "decompressed message too large"
+    return .ok out
+  match gzipDecodeStored data with
+  | .error e => return .error e
+  | .ok out =>
+    if out.size > maxOut then return .error "decompressed message too large"
+    else return .ok out
 
 /-- Adler-32 checksum (zlib/RFC 1950 footer). -/
 def adler32 (data : ByteArray) : UInt32 :=
@@ -214,22 +232,29 @@ def deflateDecodeStored (data : ByteArray) : Except String ByteArray := do
   if adler32 out != expect then throw "adler mismatch"
   return out
 
-/-- Peer-compatible deflate: `LEAN_GRPC_DEFLATE_HELPER` → system `python3 -m zlib` → stored zlib. -/
+/-- Peer-compatible deflate: absolute `LEAN_GRPC_DEFLATE_HELPER` → `python3` → stored zlib. -/
 def deflateEncodePeer (payload : ByteArray) : IO ByteArray := do
   if let some helper := ← IO.getEnv "LEAN_GRPC_DEFLATE_HELPER" then
-    if let some out ← runFilter helper #["compress"] payload then return out
+    if isAbsoluteHelperPath helper then
+      if let some out ← runFilter helper #["compress"] payload then return out
   if let some out ← runFilter "python3" #["-c",
       "import sys,zlib;sys.stdout.buffer.write(zlib.compress(sys.stdin.buffer.read()))"] payload then
     return out
   return deflateEncodeStored payload
 
-def deflateDecodePeer (data : ByteArray) : IO (Except String ByteArray) := do
+def deflateDecodePeer (data : ByteArray) (maxOut : Nat := 4 * 1024 * 1024) :
+    IO (Except String ByteArray) := do
+  let check (out : ByteArray) : Except String ByteArray :=
+    if out.size > maxOut then .error "decompressed message too large" else .ok out
   if let some helper := ← IO.getEnv "LEAN_GRPC_DEFLATE_HELPER" then
-    if let some out ← runFilter helper #["decompress"] data then return .ok out
+    if isAbsoluteHelperPath helper then
+      if let some out ← runFilter helper #["decompress"] data then return check out
   if let some out ← runFilter "python3" #["-c",
       "import sys,zlib;sys.stdout.buffer.write(zlib.decompress(sys.stdin.buffer.read()))"] data then
-    return .ok out
-  return deflateDecodeStored data
+    return check out
+  match deflateDecodeStored data with
+  | .error e => return .error e
+  | .ok out => return check out
 
 /-- Snappy varint (LEB128, little-endian groups). -/
 private def snappyVarintEncode (n : Nat) : ByteArray :=
@@ -344,12 +369,20 @@ def compressIO (alg : Algorithm) (payload : ByteArray) : IO ByteArray := do
   | .deflate => deflateEncodePeer payload
   | .snappy => pure (snappyEncodeLiteral payload)
 
-def decompressIO (alg : Algorithm) (payload : ByteArray) : IO (Except String ByteArray) := do
+def decompressIO (alg : Algorithm) (payload : ByteArray)
+    (maxOut : Nat := 4 * 1024 * 1024) : IO (Except String ByteArray) := do
   match alg with
-  | .identity => pure (.ok payload)
-  | .gzip => gzipDecodePeer payload
-  | .deflate => deflateDecodePeer payload
-  | .snappy => pure (snappyDecodeLiteral payload)
+  | .identity =>
+    if payload.size > maxOut then pure (.error "decompressed message too large")
+    else pure (.ok payload)
+  | .gzip => gzipDecodePeer payload maxOut
+  | .deflate => deflateDecodePeer payload maxOut
+  | .snappy =>
+    match snappyDecodeLiteral payload with
+    | .error e => pure (.error e)
+    | .ok out =>
+      if out.size > maxOut then pure (.error "decompressed message too large")
+      else pure (.ok out)
 
 private def trimAsciiSpaces (s : String) : String :=
   let cs := s.toList.dropWhile (fun c => c == ' ' || c == '\t')

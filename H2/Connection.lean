@@ -109,6 +109,7 @@ private def errStreamClosed : UInt32 := 0x5
 private def errFrameSize : UInt32 := 0x6
 private def errRefused : UInt32 := 0x7
 private def errCompression : UInt32 := 0x9
+private def errEnhanceYourCalm : UInt32 := 0xb
 
 private def connError (st : ConnState) (code : UInt32) : ConnState × Array Frame :=
   ({ st with wentAway := true, expectContinuation := none },
@@ -186,13 +187,22 @@ def queueSend (st : ConnState) (streamId : UInt32) (body : ByteArray)
 private def requireNoContinuation (st : ConnState) : Except String Unit := do
   if st.expectContinuation.isSome then throw "expected CONTINUATION"
 
+/-- Approximate uncompressed header list size (name+value octets + 32 per field). -/
+private def headerListSize (hdrs : Array Hpack.HeaderField) : Nat :=
+  hdrs.foldl (fun n h => n + h.name.size + h.value.size + 32) 0
+
 private def finishHeaders (st : ConnState) (s : Stream) (isTrailer : Bool) :
     Except String (ConnState × Array Frame) := do
   let block := if isTrailer then s.trailersBuf else s.headersBuf
+  let maxList := st.ourSettings.maxHeaderListSize.toNat
+  if block.size > maxList then
+    return connError st errEnhanceYourCalm
   match Hpack.decodeHeaders (Bytes.Slice.ofByteArray block) st.decoderTable
       st.ourSettings.headerTableSize.toNat with
   | .error _ => return connError st errCompression
   | .ok (hdrs, table) =>
+    if headerListSize hdrs > maxList then
+      return connError st errEnhanceYourCalm
     let st := { st with decoderTable := table }
     if st.isServer then
       match validateRequestHeaders hdrs isTrailer with
@@ -325,10 +335,15 @@ def handleFrame (st : ConnState) (f : Frame) : Except String (ConnState × Array
     if s.state == .idle then
       s := { s with state := .open }
     let isTrailer := s.gotHeaders && s.endHeaders
+    let maxList := st.ourSettings.maxHeaderListSize.toNat
     if isTrailer then
-      s := { s with trailersBuf := Bytes.Pool.pushBytes s.trailersBuf block }
+      let trailersBuf := Bytes.Pool.pushBytes s.trailersBuf block
+      if trailersBuf.size > maxList then return connError st errEnhanceYourCalm
+      s := { s with trailersBuf }
     else
-      s := { s with headersBuf := Bytes.Pool.pushBytes s.headersBuf block }
+      let headersBuf := Bytes.Pool.pushBytes s.headersBuf block
+      if headersBuf.size > maxList then return connError st errEnhanceYourCalm
+      s := { s with headersBuf }
     if Flags.has f.flags Flags.endStream then
       s := { s with endStreamRemote := true, state := .halfClosedRemote }
     let st1 := { st with
@@ -358,13 +373,18 @@ def handleFrame (st : ConnState) (f : Frame) : Except String (ConnState × Array
         let isTrailer := s.gotHeaders && s.endHeaders
         -- If we already finished headers, CONTINUATION after END_HEADERS is protocol error
         -- (handled by expectContinuation=none). Here we append.
-        let s :=
+        let maxList := st.ourSettings.maxHeaderListSize.toNat
+        let s ←
           if isTrailer then
-            { s with trailersBuf := Bytes.Pool.pushBytes s.trailersBuf f.payload }
-          else if s.gotHeaders && s.endStreamRemote && !s.endHeaders then
-            { s with headersBuf := Bytes.Pool.pushBytes s.headersBuf f.payload }
+            let trailersBuf := Bytes.Pool.pushBytes s.trailersBuf f.payload
+            if trailersBuf.size > maxList then
+              return connError st errEnhanceYourCalm
+            pure { s with trailersBuf }
           else
-            { s with headersBuf := Bytes.Pool.pushBytes s.headersBuf f.payload }
+            let headersBuf := Bytes.Pool.pushBytes s.headersBuf f.payload
+            if headersBuf.size > maxList then
+              return connError st errEnhanceYourCalm
+            pure { s with headersBuf }
         if Flags.has f.flags Flags.endHeaders then
           let st := { st with expectContinuation := none }
           finishHeaders st s (s.gotHeaders && s.endHeaders && isTrailer)
@@ -387,24 +407,31 @@ def handleFrame (st : ConnState) (f : Frame) : Except String (ConnState × Array
         let pad := payload.get! 0 |>.toNat
         if payload.size < 1 + pad then return connError st errProtocol
         payload := payload.extract 1 (payload.size - pad)
+      let psz : Int := payload.size
+      if psz > s.recvWindow || psz > st.recvConnWindow then
+        return connError st errFlowControl
       let dataBuf := Bytes.Pool.pushBytes s.dataBuf payload
       if Flags.has f.flags Flags.endStream then
         if let some expect := s.contentLength then
           if expect != dataBuf.size then
             return connError st errProtocol
+      let mut recvWin := s.recvWindow - psz
+      let mut connWin := st.recvConnWindow - psz
+      let mut out : Array Frame := #[]
+      if connWin < 32768 then
+        out := out.push (Frame.windowUpdate 0 65535)
+        connWin := connWin + 65535
+      if recvWin < 32768 then
+        out := out.push (Frame.windowUpdate f.streamId 65535)
+        recvWin := recvWin + 65535
       let s := { s with
         dataBuf
-        recvWindow := s.recvWindow - (payload.size : Int)
+        recvWindow := recvWin
         endStreamRemote := Flags.has f.flags Flags.endStream ∨ s.endStreamRemote
         state := if Flags.has f.flags Flags.endStream then .halfClosedRemote else s.state }
       let st := { st with
-        recvConnWindow := st.recvConnWindow - (payload.size : Int)
+        recvConnWindow := connWin
         streams := (st.upsertStream s).streams }
-      let mut out : Array Frame := #[]
-      if st.recvConnWindow < 32768 then
-        out := out.push (Frame.windowUpdate 0 65535)
-      if s.recvWindow < 32768 then
-        out := out.push (Frame.windowUpdate f.streamId 65535)
       return (st, out)
 
   | .rstStream =>

@@ -18,7 +18,7 @@ cd "$ROOT"
 ./scripts/build_native.sh || true
 export LEAN_GRPC_ZLIB_HELPER="${LEAN_GRPC_ZLIB_HELPER:-$ROOT/.lake/build/native/zlib_helper}"
 if [[ ! -x "$GOBIN/server" ]]; then
-  go install google.golang.org/grpc/interop/server@latest
+  go install google.golang.org/grpc/interop/server@v1.73.0
 fi
 lake build interopClient
 fuser -k "$PORT"/tcp 2>/dev/null || true

@@ -14,6 +14,7 @@ User and contributor docs for the Lean 4 gRPC stack.
 | [CHANGELOG](../CHANGELOG.md) | Package version history |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Dev setup, tests, PR expectations |
 | [SECURITY](../SECURITY.md) | Vulnerability reporting |
+| [Security review (2026-08)](security-review-2026-08.md) | Full-stack audit findings, threat model, remediation backlog |
 | [VaultGauntlet example](../Examples/VaultGauntlet/README.md) | Multi-act heist stress app + wire probes (Lean↔Lean) |
 | [MirrorForge example](../Examples/MirrorForge/README.md) | Dual-forge RR/retry/ops stress app (Lean↔Lean) |
 | [SignalWeave example](../Examples/SignalWeave/README.md) | Go client → Lean spectrum-exchange stress demo |
