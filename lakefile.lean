@@ -19,7 +19,10 @@ target tls_ffi.o pkg : FilePath := do
   let mut incArgs : Array String := #["-fPIC", "-O2", "-I", leanInc.toString]
   let opensslCflags ← IO.Process.output { cmd := "pkg-config", args := #["--cflags", "openssl"] }
   if opensslCflags.exitCode == 0 then
-    for a in (opensslCflags.stdout.splitOn " ").filter (· ≠ "") do
+    -- Trim and collapse whitespace; a trailing newline from pkg-config must not
+    -- become a bare `cc` argument (breaks Lake buildO on Ubuntu runners).
+    let cleaned := opensslCflags.stdout.trim.map (fun c => if c.isWhitespace then ' ' else c)
+    for a in (cleaned.splitOn " ").filter (· ≠ "") do
       incArgs := incArgs.push a
   else
     let localInc := pkg.dir / ".lake" / "deps" / "openssl-3.0.13" / "include"
