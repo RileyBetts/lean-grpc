@@ -53,7 +53,7 @@
 | empty_unary … timeout_on_sleeping_server (core) | ✓ | ✓ | ✓ |
 | client/server_compressed_* | ✓ | gzip helper | ✓ gzip server |
 | pick_first_unary | ✓ | — | ✓ |
-| cacheable_unary | ✓ (GET verb → EmptyCall) | — (needs real caching proxy; not run) | ✓ (GET verb → EmptyCall) |
+| cacheable_unary | ✓ (GET verb → EmptyCall) | — (needs caching proxy; not run) | ✓ vs Go; — vs Python (C-core rejects GET) |
 | jwt / oauth / per_rpc | ✓ fixture | — | — |
 | orca_per_rpc | ✓ | — | — |
 | xds_static_unary / xds_ads_unary / xds_ads_chain_unary / xds_ads_nack | ✓ | — | — |

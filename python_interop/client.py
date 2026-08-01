@@ -215,6 +215,45 @@ def run_case(
         except grpc.RpcError as e:
             assert e.code() == grpc.StatusCode.UNIMPLEMENTED, e.code()
 
+    elif case == "client_compressed_unary":
+        # Per-call gzip; Lean server inflates via grpc-encoding / Compressed-Flag.
+        resp = stub.UnaryCall(
+            messages_pb2.SimpleRequest(
+                response_size=31415,
+                payload=_payload(27182),
+                expect_compressed=messages_pb2.BoolValue(value=True),
+            ),
+            compression=grpc.Compression.Gzip,
+        )
+        assert len(resp.payload.body) == 31415, len(resp.payload.body)
+
+    elif case == "server_compressed_unary":
+        resp = stub.UnaryCall(
+            messages_pb2.SimpleRequest(
+                response_size=31415,
+                payload=_payload(27182),
+                response_compressed=messages_pb2.BoolValue(value=True),
+            ),
+            compression=grpc.Compression.Gzip,
+        )
+        assert len(resp.payload.body) == 31415, len(resp.payload.body)
+
+    elif case == "server_compressed_streaming":
+        sizes = [31415, 92653]
+        req = messages_pb2.StreamingOutputCallRequest(
+            response_parameters=[
+                messages_pb2.ResponseParameters(
+                    size=n, compressed=messages_pb2.BoolValue(value=True)
+                )
+                for n in sizes
+            ]
+        )
+        bodies = [
+            r.payload.body
+            for r in stub.StreamingOutputCall(req, compression=grpc.Compression.Gzip)
+        ]
+        assert [len(b) for b in bodies] == sizes, [len(b) for b in bodies]
+
     else:
         raise SystemExit(f"unknown/unsupported python case: {case}")
 

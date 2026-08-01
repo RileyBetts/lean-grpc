@@ -8,7 +8,9 @@ CASES=(
   server_streaming client_streaming ping_pong empty_stream
   cancel_after_first_response special_status_message unimplemented_method unimplemented_service
   timeout_on_sleeping_server
+  client_compressed_unary server_compressed_unary server_compressed_streaming
 )
+# Note: cacheable_unary omitted (needs caching proxy + CacheableUnaryCall / GET).
 cd "$ROOT"
 
 if [[ ! -d .venv-interop ]]; then

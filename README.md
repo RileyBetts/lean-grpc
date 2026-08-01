@@ -1,12 +1,28 @@
 # lean-grpc
 
-General-purpose **pure Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
+General-purpose **Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
 
 Standalone project. Consumers depend on it via Lake.
 
 **Libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (plus examples/tests).
 
-## Status (~100% / ~99.5% toward grpc-go parity)
+## Documentation
+
+| Doc | Description |
+|---|---|
+| [docs/README.md](docs/README.md) | Documentation index |
+| [Getting started](docs/getting-started.md) | First server/client, TLS, Lake dependency |
+| [Architecture](docs/architecture.md) | Layering and data flow |
+| [API reference](docs/api-reference.md) | Module catalogue |
+| [Protocol mapping](docs/protocol-mapping.md) | gRPC-over-HTTP/2 mapping for this stack |
+| [Conformance](docs/conformance.md) | Scorecard, interop matrix, allowlists |
+| [TLS / Envoy](docs/tls-envoy.md) | In-process OpenSSL and sidecars |
+| [CONTRIBUTING](CONTRIBUTING.md) | Dev setup and PR expectations |
+| [SECURITY](SECURITY.md) | Vulnerability reporting |
+
+## Status
+
+Near **grpc-go / official interop** parity for general-purpose use. Core wire + Go/Python interop are CI-gated. Cloud-edge items (live Google ADC, ALTS) remain mock/allowlisted — see [conformance.md](docs/conformance.md).
 
 | Layer | Package | Notes |
 |---|---|---|
@@ -14,12 +30,10 @@ Standalone project. Consumers depend on it via Lake.
 | HPACK | `Hpack` | Static + dynamic table, Huffman encode/decode |
 | HTTP/2 h2c | `H2` | Full h2spec hard gate; flow control; CONTINUATION; §8.1 |
 | Protobuf (minimal) | `Proto` | Enums, nested, repeated, Any/map/oneof helpers |
-| gRPC | `Grpc` | Duplex streams, deadlines, gzip, dial/LB/retry, health/reflection/channelz |
-| TLS | `Grpc.Native.Tls` + `Grpc.Tls` | **In-process** OpenSSL ALPN `h2` (sidecar optional) |
-| ADC / xDS | `Grpc.Adc`, `Grpc.XdsAds` | SA/metadata Bearer; ADS CDS/EDS subset |
-| Codegen | `protoc-gen-lean4-grpc` | Typed abbrevs + unary/streaming stubs |
-
-See [docs/conformance.md](docs/conformance.md) for the phase scorecard and interop checklist.
+| gRPC | `Grpc` | Duplex streams, deadlines, compression, dial/LB/retry, health/reflection/channelz |
+| TLS | `Grpc.Native.Tls` + `Grpc.Tls` | **In-process** OpenSSL ALPN `h2` (sidecar optional); mTLS |
+| ADC / xDS | `Grpc.Adc`, `Grpc.XdsAds` | SA/metadata Bearer; ADS LDS→EDS chain |
+| Codegen | `protoc-gen-lean4-grpc` | Text path + real `CodeGeneratorRequest` path |
 
 **Allowlist:** ALTS / GCE channel credentials (see `Grpc.Gcp`).
 
@@ -33,6 +47,16 @@ lake build bytesTests hpackTests h2Tests grpcTests trailersLoopback
 ./scripts/build_native.sh            # zlib_helper (+ optional tls_proxy)
 ```
 
+## Quick start
+
+```bash
+lake build helloworldServer helloworldClient
+./.lake/build/bin/helloworldServer &
+./.lake/build/bin/helloworldClient 127.0.0.1 50051 World
+```
+
+Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
+
 ## Interop
 
 ```bash
@@ -43,7 +67,9 @@ GRPC_PORT=10001 ./scripts/interop-lean-python.sh
 ./scripts/interop-compress-go-lean.sh       # gzip both directions (Go gzip server)
 ./scripts/interop-tls-go-lean.sh            # in-process TLS Lean → Go
 ./scripts/run-adc-smoke.sh                  # ADC against local mock
-./scripts/run-xds-ads-smoke.sh              # Fake ADS (protobuf EDS) → unary
+./scripts/run-xds-ads-smoke.sh              # Fake ADS chain → unary
+./scripts/run-codegen-fixture.sh
+./scripts/run-soak.sh
 ./scripts/h2spec.sh
 ```
 
@@ -58,4 +84,4 @@ lake build helloworldServer helloworldClient benchSoak
 
 ## License
 
-Apache-2.0
+Apache-2.0 — see [LICENSE](LICENSE).
