@@ -159,7 +159,7 @@ def methodGet : Hpack.HeaderField := ⟨ascii ":method", ascii "GET"⟩
 def schemeHttp : Hpack.HeaderField := ⟨ascii ":scheme", ascii "http"⟩
 def schemeHttps : Hpack.HeaderField := ⟨ascii ":scheme", ascii "https"⟩
 def teTrailers : Hpack.HeaderField := ⟨ascii "te", ascii "trailers"⟩
-def userAgent (version : String := "0.4.0") : Hpack.HeaderField :=
+def userAgent (version : String := "0.5.0") : Hpack.HeaderField :=
   ⟨ascii "user-agent", ascii s!"grpc-lean/{version}"⟩
 
 def http415 : Array Hpack.HeaderField :=

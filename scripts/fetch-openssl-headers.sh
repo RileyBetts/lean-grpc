@@ -19,6 +19,7 @@ tar xzf openssl.tgz
 rm openssl.tgz
 cd "openssl-$VER"
 ./Configure --prefix="$DEP/openssl-prefix" no-tests no-shared >/dev/null
-make -j"$(nproc)" build_generated >/dev/null
+jobs="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+make -j"$jobs" build_generated >/dev/null
 test -f include/openssl/ssl.h
 echo "generated $DEP/openssl-$VER/include"

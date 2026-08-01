@@ -24,7 +24,12 @@ sleep 1.0
 
 export LEAN_GRPC_RESOLVE_ADDRS="127.0.0.1:${PORT_A},127.0.0.1:${PORT_B}"
 set +e
-stdbuf -oL -eL ./.lake/build/bin/mirrorForgeClient 127.0.0.1 "$PORT_A" "$PORT_B"
+if command -v stdbuf >/dev/null 2>&1; then
+  stdbuf -oL -eL ./.lake/build/bin/mirrorForgeClient 127.0.0.1 "$PORT_A" "$PORT_B"
+else
+  # macOS / minimal environments often lack GNU coreutils `stdbuf`.
+  ./.lake/build/bin/mirrorForgeClient 127.0.0.1 "$PORT_A" "$PORT_B"
+fi
 ec=$?
 set -e
 if [[ "$ec" -ne 0 ]]; then

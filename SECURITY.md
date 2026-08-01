@@ -2,7 +2,9 @@
 
 ## Supported versions
 
-Security fixes are applied to the default branch (`main` / `development` as published). There is no long-term LTS train yet; use a recent commit or tagged release when available.
+Security fixes are applied to the published tip (`main` / `development` as released). There is no long-term LTS train yet.
+
+**Supported version:** the latest **tagged** release (e.g. `v0.5.0`) once tags exist; until then, use a recent commit from `main`. Maintainers create tags manually — see [docs/packaging.md](docs/packaging.md). After the repository is public, prefer GitHub Security Advisories for private reports when enabled.
 
 ## Reporting a vulnerability
 

@@ -5,12 +5,13 @@ Thanks for helping improve the Lean 4 gRPC stack. This document covers local set
 ## Development setup
 
 1. Install [elan](https://github.com/leanprover/elan) / Lean 4 matching `lean-toolchain` (4.32.x).
-2. Install OpenSSL headers (`libssl-dev` / `pkg-config`) or run `./scripts/fetch-openssl-headers.sh`.
-3. Optional: Go 1.24+ and Python 3.12+ for interop matrices; `zlib1g-dev` for native gzip helper.
+2. Install OpenSSL headers (`libssl-dev` / `pkg-config` on Debian/Ubuntu; Homebrew `openssl` + `pkg-config` on macOS) or run `./scripts/fetch-openssl-headers.sh`.
+3. Optional: Go 1.24+ and Python 3.12+ for interop matrices; `zlib1g-dev` (or Homebrew `zlib`) for native gzip helper.
 
 ```bash
+./scripts/fetch-openssl-headers.sh   # no-op when system headers exist
 lake build
-./scripts/build_native.sh
+./scripts/build_native.sh            # zlib_helper (+ optional tls_proxy)
 ```
 
 ## Branching
@@ -18,6 +19,8 @@ lake build
 - `main` — stable releases / published tip  
 - `development` — integration branch  
 - Feature work: branch from `development` (e.g. `feature/…`)
+
+Release / Reservoir checklist (tagging is **manual**): [docs/packaging.md](docs/packaging.md).
 
 ## Tests to run before a PR
 

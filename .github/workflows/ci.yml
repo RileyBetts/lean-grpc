@@ -14,6 +14,10 @@ jobs:
           test: false
       - name: Install OpenSSL headers (TLS FFI)
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+      - name: OpenSSL header fallback (no-op when system headers present)
+        run: |
+          chmod +x scripts/fetch-openssl-headers.sh
+          ./scripts/fetch-openssl-headers.sh
       - name: Build libraries and tests
         run: lake build bytesTests hpackTests h2Tests grpcTests trailersServer trailersLoopback tlsServer tlsLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary benchSoak opsSmoke h2specServer routeGuideServer routeGuideClient adcSmoke fakeAdsServer
       - name: Unit tests
@@ -26,10 +30,10 @@ jobs:
       - name: Codegen smoke
         run: |
           mkdir -p /tmp/lean-grpc-gen-hw /tmp/lean-grpc-gen-rg
-          LEAN_GRPC_OUT=/tmp/lean-grpc-gen-hw ./.lake/build/bin/protoc-gen-lean4-grpc examples/helloworld.proto
+          LEAN_GRPC_OUT=/tmp/lean-grpc-gen-hw ./.lake/build/bin/protoc-gen-lean4-grpc Examples/helloworld.proto
           test -f /tmp/lean-grpc-gen-hw/Generated.lean
           grep -qE 'SayHello|HelloRequest' /tmp/lean-grpc-gen-hw/Generated.lean
-          LEAN_GRPC_OUT=/tmp/lean-grpc-gen-rg ./.lake/build/bin/protoc-gen-lean4-grpc examples/route_guide.proto
+          LEAN_GRPC_OUT=/tmp/lean-grpc-gen-rg ./.lake/build/bin/protoc-gen-lean4-grpc Examples/route_guide.proto
           test -f /tmp/lean-grpc-gen-rg/Generated.lean
           chmod +x scripts/run-codegen-fixture.sh
           ./scripts/run-codegen-fixture.sh

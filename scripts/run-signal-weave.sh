@@ -23,7 +23,11 @@ if [[ ! -f go.sum ]]; then
   go mod tidy
 fi
 set +e
-stdbuf -oL -eL go run . 127.0.0.1 "$PORT"
+if command -v stdbuf >/dev/null 2>&1; then
+  stdbuf -oL -eL go run . 127.0.0.1 "$PORT"
+else
+  go run . 127.0.0.1 "$PORT"
+fi
 ec=$?
 set -e
 if [[ "$ec" -ne 0 ]]; then

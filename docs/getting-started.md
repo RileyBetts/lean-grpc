@@ -117,7 +117,7 @@ Timeout strings follow gRPC (`H`/`M`/`S`/`m`/`u`/`n`). Compression algorithms: `
 **Text path (Lake smoke):**
 
 ```bash
-LEAN_GRPC_OUT=/tmp/gen LEAN_GRPC_PROTO=examples/helloworld.proto \
+LEAN_GRPC_OUT=/tmp/gen LEAN_GRPC_PROTO=Examples/helloworld.proto \
   ./.lake/build/bin/protoc-gen-lean4-grpc
 # writes /tmp/gen/Generated.lean (ByteArray-typed stubs)
 ```
@@ -134,14 +134,16 @@ Without `protoc` installed, `./scripts/run-codegen-fixture.sh` exercises the des
 
 ## Depend from another Lake project
 
+**System deps:** OpenSSL + zlib (`libssl-dev` / Homebrew `openssl`, plus `pkg-config` / `zlib`). Fallback: `./scripts/fetch-openssl-headers.sh`.
+
 In your `lakefile.lean`:
 
 ```lean
 require «lean-grpc» from git
-  "https://github.com/RileyBetts/lean-grpc.git" @ "v0.5.0"  -- or a commit/branch
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v0.5.0"
 ```
 
-Then `import Grpc` (and `Proto` if you use the bundled codecs). Link needs OpenSSL (`-lssl -lcrypto`) and optionally zlib — see this package’s `moreLinkArgs`.
+Then `import Grpc` (and `Proto` if you use the bundled codecs). Public libs: `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc`. Link needs OpenSSL (`-lssl -lcrypto`) and zlib (`-lz`) — see this package’s `moreLinkArgs`. Full packaging notes: [packaging.md](packaging.md).
 
 ## Next steps
 

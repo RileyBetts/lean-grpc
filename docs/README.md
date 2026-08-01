@@ -5,11 +5,13 @@ User and contributor docs for the Lean 4 gRPC stack.
 | Doc | Audience |
 |---|---|
 | [Getting started](getting-started.md) | First unary server/client, TLS, Lake dependency |
+| [Packaging](packaging.md) | Lake/Reservoir distribution, consumer contract, maintainer release checklist |
 | [Architecture](architecture.md) | Layering, data flow, process model |
 | [API reference](api-reference.md) | Primary `Grpc` / `H2` / `Proto` surfaces |
 | [Protocol mapping](protocol-mapping.md) | How lean-grpc maps onto gRPC-over-HTTP/2 |
 | [Conformance](conformance.md) | Scorecard, compliance estimates, interop matrix, allowlists |
 | [TLS / Envoy](tls-envoy.md) | In-process OpenSSL and optional sidecars |
+| [CHANGELOG](../CHANGELOG.md) | Package version history |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Dev setup, tests, PR expectations |
 | [SECURITY](../SECURITY.md) | Vulnerability reporting |
 | [VaultGauntlet example](../Examples/VaultGauntlet/README.md) | Multi-act heist stress app + wire probes (Lean↔Lean) |
