@@ -104,53 +104,61 @@ partial def ensureHeaders (r : StreamReader) (fuel : Nat := 200) : IO (Array Hpa
     r.conn.state.set st
     ensureHeaders r (fuel - 1)
 
-/-- Receive next message, or `none` when remote half-closes (trailers available). -/
+/-- Receive next message, or `none` when remote half-closes (trailers available).
+    Uses peer-compatible inflate for Compressed-Flag frames (gzip/deflate/snappy). -/
 partial def recv? (r : StreamReader) (fuel : Nat := 200) : IO (Option ByteArray) := do
   if ← r.done.get then return none
   discard <| ensureHeaders r
   let pend ← r.pending.get
-  match decodeAvailable pend with
-  | .error e => throw (IO.userError e)
-  | .ok (msgs, rest) =>
-    if msgs.size > 0 then
-      r.pending.set rest
-      -- Return first; push remainder back by re-encoding... keep simple: only one at a time
-      let mut left := ByteArray.empty
-      for i in [1:msgs.size] do
-        left := Bytes.Pool.pushBytes left (Message.encodeId msgs[i]!)
-      r.pending.set (Bytes.Pool.pushBytes left rest)
-      return some msgs[0]!
-    let st ← r.conn.state.get
-    if let some s := st.getStream r.streamId then
-      let seen ← r.dataSeen.get
-      if s.dataBuf.size > seen then
-        let fresh := s.dataBuf.extract seen s.dataBuf.size
-        r.pending.set (Bytes.Pool.pushBytes pend fresh)
-        r.dataSeen.set s.dataBuf.size
-        return (← recv? r fuel)
-      if s.endStreamRemote then
-        r.trailers.set (some s.decodedTrailers)
-        r.done.set true
-        return none
-    if fuel == 0 then throw (IO.userError "timeout waiting message")
-    match (← r.conn.transport.recv? 65536) with
-    | none =>
+  if pend.size ≥ 5 then
+    match ← Message.decodeOneIO (Bytes.Slice.ofByteArray pend) with
+    | .ok (msg, rest) =>
+      r.pending.set rest.toByteArray
+      return some msg
+    | .error e =>
+      -- Incomplete frame: wait for more DATA unless the error is real corruption.
+      if e == "incomplete grpc message" || e == "short grpc frame" then
+        pure ()
+      else
+        throw (IO.userError e)
+  let st ← r.conn.state.get
+  if let some s := st.getStream r.streamId then
+    let seen ← r.dataSeen.get
+    if s.dataBuf.size > seen then
+      let fresh := s.dataBuf.extract seen s.dataBuf.size
+      r.pending.set (Bytes.Pool.pushBytes pend fresh)
+      r.dataSeen.set s.dataBuf.size
+      return (← recv? r fuel)
+    if s.endStreamRemote then
+      -- Flush any complete trailing frame before finishing.
+      if pend.size ≥ 5 then
+        match ← Message.decodeOneIO (Bytes.Slice.ofByteArray pend) with
+        | .ok (msg, rest) =>
+          r.pending.set rest.toByteArray
+          return some msg
+        | .error _ => pure ()
+      r.trailers.set (some s.decodedTrailers)
       r.done.set true
       return none
-    | some chunk =>
-      let mut buf ← r.conn.readBuf.get
-      buf := Bytes.Pool.pushBytes buf chunk
-      let st0 ← r.conn.state.get
-      let (frames, consumed) ← IO.ofExcept
-        (H2.decodeFrames (Bytes.Slice.ofByteArray buf) st0.ourSettings.maxFrameSize.toNat)
-      r.conn.readBuf.set (buf.extract consumed buf.size)
-      let mut st := st0
-      for f in frames do
-        let (st', outs) ← IO.ofExcept (H2.handleFrame st f)
-        st := st'
-        H2.sendFrames r.conn.transport outs
-      r.conn.state.set st
-      recv? r (fuel - 1)
+  if fuel == 0 then throw (IO.userError "timeout waiting message")
+  match (← r.conn.transport.recv? 65536) with
+  | none =>
+    r.done.set true
+    return none
+  | some chunk =>
+    let mut buf ← r.conn.readBuf.get
+    buf := Bytes.Pool.pushBytes buf chunk
+    let st0 ← r.conn.state.get
+    let (frames, consumed) ← IO.ofExcept
+      (H2.decodeFrames (Bytes.Slice.ofByteArray buf) st0.ourSettings.maxFrameSize.toNat)
+    r.conn.readBuf.set (buf.extract consumed buf.size)
+    let mut st := st0
+    for f in frames do
+      let (st', outs) ← IO.ofExcept (H2.handleFrame st f)
+      st := st'
+      H2.sendFrames r.conn.transport outs
+    r.conn.state.set st
+    recv? r (fuel - 1)
 
 def getTrailers (r : StreamReader) : IO (Array Hpack.HeaderField) := do
   discard <| recv? r  -- drain

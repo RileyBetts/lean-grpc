@@ -12,6 +12,7 @@ User and contributor docs for the Lean 4 gRPC stack.
 | [TLS / Envoy](tls-envoy.md) | In-process OpenSSL and optional sidecars |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Dev setup, tests, PR expectations |
 | [SECURITY](../SECURITY.md) | Vulnerability reporting |
+| [VaultGauntlet example](../Examples/VaultGauntlet/README.md) | Multi-act heist stress app + wire probes |
 
 Official external specs lean-grpc targets:
 

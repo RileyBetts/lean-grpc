@@ -97,6 +97,15 @@ lean_exe routeGuideServer where
 lean_exe routeGuideClient where
   root := `Examples.RouteGuide.Client
 
+lean_lib VaultGauntlet where
+  roots := #[`Examples.VaultGauntlet.Protocol]
+
+lean_exe vaultGauntletServer where
+  root := `Examples.VaultGauntlet.Server
+
+lean_exe vaultGauntletClient where
+  root := `Examples.VaultGauntlet.Client
+
 lean_exe protocGenLean4Grpc where
   root := `Grpc.Codegen.Plugin
   exeName := "protoc-gen-lean4-grpc"
