@@ -50,6 +50,7 @@ def Status.deadlineExceeded (msg : String := "deadline exceeded") : Status :=
 def Status.unavailable (msg : String := "") : Status := { code := .unavailable, message := msg }
 def Status.invalidArgument (msg : String := "") : Status := { code := .invalidArgument, message := msg }
 def Status.permissionDenied (msg : String := "") : Status := { code := .permissionDenied, message := msg }
+def Status.unauthenticated (msg : String := "") : Status := { code := .unauthenticated, message := msg }
 
 end Grpc
 

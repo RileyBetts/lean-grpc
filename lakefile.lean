@@ -106,6 +106,15 @@ lean_exe vaultGauntletServer where
 lean_exe vaultGauntletClient where
   root := `Examples.VaultGauntlet.Client
 
+lean_lib MirrorForge where
+  roots := #[`Examples.MirrorForge.Protocol]
+
+lean_exe mirrorForgeServer where
+  root := `Examples.MirrorForge.Server
+
+lean_exe mirrorForgeClient where
+  root := `Examples.MirrorForge.Client
+
 lean_exe protocGenLean4Grpc where
   root := `Grpc.Codegen.Plugin
   exeName := "protoc-gen-lean4-grpc"
