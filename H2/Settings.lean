@@ -10,7 +10,10 @@ structure Settings where
   maxConcurrentStreams : UInt32 := 100
   initialWindowSize : UInt32 := 65535
   maxFrameSize : UInt32 := 16384
-  maxHeaderListSize : UInt32 := 8192
+  -- Uncompressed list size (RFC 9113). Keep high enough for h2spec CONTINUATION
+  -- (CommonHeaders + 2× DummyHeaders at --max-header-length=4000) while still
+  -- bounding memory; securityTests override to a tiny value.
+  maxHeaderListSize : UInt32 := 262144
   deriving Inhabited
 
 inductive SettingId where
