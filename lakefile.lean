@@ -106,6 +106,30 @@ lean_exe vaultGauntletServer where
 lean_exe vaultGauntletClient where
   root := `Examples.VaultGauntlet.Client
 
+lean_lib MirrorForge where
+  roots := #[`Examples.MirrorForge.Protocol]
+
+lean_exe mirrorForgeServer where
+  root := `Examples.MirrorForge.Server
+
+lean_exe mirrorForgeClient where
+  root := `Examples.MirrorForge.Client
+
+lean_lib SignalWeave where
+  roots := #[`Examples.SignalWeave.Protocol]
+
+lean_exe signalWeaveServer where
+  root := `Examples.SignalWeave.Server
+
+lean_lib FramingMatrix where
+  roots := #[`Tests.FramingMatrix.Protocol]
+
+lean_exe framingMatrixServer where
+  root := `Tests.FramingMatrix.Server
+
+lean_exe framingMatrixLeanClient where
+  root := `Tests.FramingMatrix.LeanClient
+
 lean_exe protocGenLean4Grpc where
   root := `Grpc.Codegen.Plugin
   exeName := "protoc-gen-lean4-grpc"

@@ -22,7 +22,15 @@ Standalone project. Consumers depend on it via Lake.
 
 ## Status
 
-Near **grpc-go / official interop** parity for general-purpose use. Core wire + Go/Python interop are CI-gated. Cloud-edge items (live Google ADC, ALTS) remain mock/allowlisted — see [conformance.md](docs/conformance.md).
+Near **grpc-go / official interop** parity for general-purpose use. Core wire + Go/Python interop and stress/framing gates are CI-gated. Cloud-edge items (live Google ADC, ALTS) remain mock/allowlisted.
+
+Rough estimates (see [conformance.md](docs/conformance.md) for detail):
+
+| Axis | Implemented | Tested |
+|---|---:|---:|
+| Official gRPC standard | ~95% | ~90% |
+| vs grpc-go surface | ~93% | ~88% |
+| vs Python (grpcio) peer | ~92% | ~82% |
 
 | Layer | Package | Notes |
 |---|---|---|

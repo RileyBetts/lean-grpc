@@ -185,8 +185,18 @@ def handlerFor (s : Server) : H2.StreamHandler := fun _streamId headers data end
           finished := true
         }
       | .bidi h =>
-        if payloads.isEmpty && !endStream then
-          return { finished := false }
+        -- grpc-go (and peers) often half-close with an empty DATA+END_STREAM after
+        -- prior messages were already delivered. Re-invoking the app handler with
+        -- `#[ ]` would drop batch state (e.g. "not locked" after a successful
+        -- incremental handshake). Finalize with trailers-only OK instead.
+        if payloads.isEmpty then
+          if !endStream then
+            return { finished := false }
+          return {
+            headers := if headersSent then #[] else respHeaders
+            trailers := Metadata.statusHeaders Status.ok
+            finished := true
+          }
         let (msgs, st) ← h payloads
         if endStream then
           return {

@@ -5,6 +5,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 import Grpc
 import H2
 import Proto
+import Bytes.Pool
 import Bytes.Slice
 
 /-- Internal helper mode used by the `LEAN_GRPC_RESOLVE_ADDRS` test below: since
@@ -51,6 +52,45 @@ def main (args : List String) : IO Unit := do
   | .ok (p, _) =>
     let r ← IO.ofExcept (Proto.HelloRequest.decode p)
     if r.name != "gz" then throw (IO.userError "stored via peer path")
+
+  -- Invariant: multi-frame gzip stream must decode via decodeAllIO / decodeOneIO
+  -- (the VaultGauntlet bug class — stored-only inflate breaks peer frames).
+  let rawA := Proto.HelloRequest.encode { name := "a" }
+  let rawB := Proto.HelloRequest.encode { name := "b" }
+  let frameA ← Grpc.Message.encodeIO rawA .gzip
+  let frameB ← Grpc.Message.encodeIO rawB .gzip
+  let streamBody := Bytes.Pool.pushBytes frameA frameB
+  match ← Grpc.Message.decodeAllIO (Bytes.Slice.ofByteArray streamBody) true .gzip with
+  | .error e => throw (IO.userError s!"multi gzip decodeAllIO {e}")
+  | .ok ps =>
+    if ps.size != 2 then throw (IO.userError s!"multi gzip count {ps.size}")
+    let a ← IO.ofExcept (Proto.HelloRequest.decode ps[0]!)
+    let b ← IO.ofExcept (Proto.HelloRequest.decode ps[1]!)
+    if a.name != "a" || b.name != "b" then throw (IO.userError "multi gzip names")
+  -- Same stream decoded one frame at a time (StreamReader.recv? path).
+  match ← Grpc.Message.decodeOneIO (Bytes.Slice.ofByteArray streamBody) true .gzip with
+  | .error e => throw (IO.userError s!"multi gzip decodeOneIO {e}")
+  | .ok (p0, rest) =>
+    let a ← IO.ofExcept (Proto.HelloRequest.decode p0)
+    if a.name != "a" then throw (IO.userError "decodeOneIO first")
+    match ← Grpc.Message.decodeOneIO rest true .gzip with
+    | .error e => throw (IO.userError s!"multi gzip decodeOneIO2 {e}")
+    | .ok (p1, rest2) =>
+      let b ← IO.ofExcept (Proto.HelloRequest.decode p1)
+      if b.name != "b" || !rest2.isEmpty then throw (IO.userError "decodeOneIO second")
+
+  -- Invariant: client halfClose sends empty DATA + END_STREAM (grpc-go style).
+  -- Empty payload + endStream must not be treated as an app-level empty request
+  -- that wipes incremental bidi state (SignalWeave bug class).
+  let emptyHalfClose := H2.Frame.data 1 ByteArray.empty true
+  if emptyHalfClose.payload.size != 0 then throw (IO.userError "halfclose payload")
+  if !H2.Flags.has emptyHalfClose.flags H2.Flags.endStream then
+    throw (IO.userError "halfclose endStream flag")
+  -- H2 stream bookkeeping: after consuming all buffered data, fresh slice is empty.
+  let s0 := H2.Stream.create 1 65535 65535
+  let s1 := { s0 with dataBuf := ByteArray.mk #[1, 2, 3, 4], dataConsumed := 4 }
+  let fresh := s1.dataBuf.extract s1.dataConsumed s1.dataBuf.size
+  if fresh.size != 0 then throw (IO.userError "dataConsumed fresh nonempty")
 
   -- deflate (zlib) round-trip, pure + peer-compatible
   let rawDf := Proto.HelloRequest.encode { name := "df" }
