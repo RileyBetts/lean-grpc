@@ -16,21 +16,16 @@ cd "$ROOT"
 
 if [[ ! -d .venv-interop ]]; then
   python3 -m venv .venv-interop
-  # shellcheck disable=SC1091
-  source .venv-interop/bin/activate
-  pip install -q --upgrade pip
-  pip install -q -r python_interop/requirements.txt
-else
-  # shellcheck disable=SC1091
-  source .venv-interop/bin/activate
 fi
+# shellcheck disable=SC1091
+source .venv-interop/bin/activate
+pip install -q --upgrade pip
+pip install -q -r python_interop/requirements.txt
 
-if [[ ! -f python_interop/test_pb2_grpc.py ]]; then
-  python -m grpc_tools.protoc -I python_interop/proto \
-    --python_out=python_interop --grpc_python_out=python_interop \
-    python_interop/proto/empty.proto python_interop/proto/messages.proto \
-    python_interop/proto/test.proto
-fi
+python -m grpc_tools.protoc -I python_interop/proto \
+  --python_out=python_interop --grpc_python_out=python_interop \
+  python_interop/proto/empty.proto python_interop/proto/messages.proto \
+  python_interop/proto/test.proto
 
 lake build interopClient
 fuser -k "${PORT}/tcp" 2>/dev/null || true
