@@ -72,13 +72,16 @@ jobs:
           sleep 0.5
           ./.lake/build/bin/helloworldClient 127.0.0.1 50051 World
           ./.lake/build/bin/opsSmoke 127.0.0.1 50051
+          # run-soak starts its own server and may reclaim port 50051
           ./scripts/run-soak.sh
-          kill $pid
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
           ./.lake/build/bin/routeGuideServer &
           pid=$!
           sleep 0.5
           ./.lake/build/bin/routeGuideClient 127.0.0.1 50052
-          kill $pid
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
 
   stress-framing:
     runs-on: ubuntu-latest

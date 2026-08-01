@@ -21,7 +21,7 @@ target tls_ffi.o pkg : FilePath := do
   if opensslCflags.exitCode == 0 then
     -- Split on spaces/newlines so trailing whitespace from pkg-config does not
     -- become a bare `cc` argument (breaks Lake buildO on Ubuntu runners).
-    let cleaned := String.mk <| opensslCflags.stdout.toList.map fun c =>
+    let cleaned := String.ofList <| opensslCflags.stdout.toList.map fun c =>
       if c.isWhitespace then ' ' else c
     for a in (cleaned.splitOn " ").filter (· ≠ "") do
       incArgs := incArgs.push a
