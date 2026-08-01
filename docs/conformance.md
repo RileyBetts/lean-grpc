@@ -65,7 +65,7 @@ Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, 
 | empty_unary … timeout_on_sleeping_server (core) | ✓ | ✓ | ✓ |
 | client/server_compressed_* | ✓ | gzip helper | ✓ gzip server |
 | pick_first_unary | ✓ | — | ✓ |
-| cacheable_unary | ✓ (GET verb → EmptyCall) | — (needs caching proxy; not run) | ✓ vs Go; — vs Python (C-core rejects GET) |
+| cacheable_unary | ✓ (GET verb → EmptyCall) | — (needs caching proxy; not run) | — vs Go (GET EmptyCall → INTERNAL on recent grpc-go); — vs Python |
 | jwt / oauth / per_rpc | ✓ fixture | — | — |
 | orca_per_rpc | ✓ | — | — |
 | xds_static_unary / xds_ads_unary / xds_ads_chain_unary / xds_ads_nack | ✓ | — | — |
@@ -74,9 +74,10 @@ Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, 
 
 Notes:
 - `cacheable_unary` here checks the GET-verb wire mechanism (safe/idempotent calls use
-  `:method: GET`) against `EmptyCall` rather than replicating the official test
-  framework's full `CacheableUnaryCall` + caching-proxy + timestamp-equality assertions,
-  which require infrastructure (a real caching proxy) outside this repo's scope.
+  `:method: GET`) against `EmptyCall` in Lean↔Lean CI, rather than replicating the official
+  `CacheableUnaryCall` + caching-proxy + timestamp-equality assertions (infrastructure outside
+  this repo). It is not run against recent grpc-go interop servers (GET EmptyCall → INTERNAL)
+  or Python C-core (rejects GET).
 - `cancel_after_begin` / `cancel_after_first_response` now assert `CANCELLED` (grpc-status 1)
   after the client-initiated RST, using the same RST→trailers mapping (`H2.Client.rstToTrailers`)
   applied locally as soon as the client sends the reset.
