@@ -121,6 +121,15 @@ lean_lib SignalWeave where
 lean_exe signalWeaveServer where
   root := `Examples.SignalWeave.Server
 
+lean_lib FramingMatrix where
+  roots := #[`Tests.FramingMatrix.Protocol]
+
+lean_exe framingMatrixServer where
+  root := `Tests.FramingMatrix.Server
+
+lean_exe framingMatrixLeanClient where
+  root := `Tests.FramingMatrix.LeanClient
+
 lean_exe protocGenLean4Grpc where
   root := `Grpc.Codegen.Plugin
   exeName := "protoc-gen-lean4-grpc"

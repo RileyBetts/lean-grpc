@@ -7,6 +7,7 @@
 | vs grpc-go app surfaces | **~100 implemented / ~99.5 tested** |
 | h2spec | **145/146 pass, 1 skipped** (full suite hard CI; skip is h2spec suite skip, not an allowlisted failure) |
 | Official non-auth interop | Lean↔Lean; **Go↔Lean**; **Python↔Lean** (CI) |
+| Stress demos + framing matrix | **Hard CI** (`scripts/run-stress-demos.sh`): VaultGauntlet, MirrorForge, SignalWeave, FramingMatrix |
 | Compression | identity/gzip/deflate/snappy; Go gzip client→Lean; Lean→Go gzip-enabled server |
 | In-process TLS | Lean→Go TLS unary (no sidecar); Lean↔Lean mTLS (client cert required/verified) |
 | ADC | SA JWT + GCE metadata (**mock CI**, not live Google); `run-adc-live.sh` for manual/nightly live checks |
@@ -19,6 +20,7 @@
 |---|---|---|
 | HTTP/2 + HPACK (h2spec) | 100 | Full hard gate |
 | Core RPC + duplex + deadlines | 100 | Incremental FullDuplex; mid-RPC deadline RST |
+| Peer framing / empty half-close | 100 | FramingMatrix + stress demos hard-gated; multi-frame gzip `decodeOneIO`; bidi empty `DATA+END_STREAM` finalize |
 | PROTOCOL-HTTP2 wire correctness | 100 | HTTP 415 on bad content-type; RST→status mapping; `grpc-status-details-bin`/`google.rpc.Status`; trailers-only errors; `user-agent`; `:scheme https` on TLS |
 | Official non-auth interop | 100 | Go + Python matrices in CI |
 | Protobuf + codegen | 97 | Text `.proto` path (`LEAN_GRPC_PROTO`) unchanged; real `protoc`-plugin path now decodes `CodeGeneratorRequest` and emits real message structs + typed client/server/bidi signatures (`scripts/run-codegen-fixture.sh`) |
@@ -129,6 +131,8 @@ GRPC_PORT=10001 ./scripts/interop-lean-python.sh
 ./scripts/run-codegen-fixture.sh     # real protoc-plugin descriptor decode + typed emit
 ./scripts/run-soak.sh                # rpc_soak + channel_soak flag surface
 ./scripts/h2spec.sh
+./scripts/run-stress-demos.sh        # VaultGauntlet + MirrorForge + SignalWeave + FramingMatrix
+./scripts/run-framing-matrix.sh      # peer framing only (Lean↔Lean + Go→Lean)
 lake build tlsLoopback && ./.lake/build/bin/tlsLoopback   # mTLS loopback (needs `openssl` CLI)
 
 # Manual / nightly only — needs live Google credentials + network egress:

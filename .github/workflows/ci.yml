@@ -76,6 +76,24 @@ jobs:
           ./.lake/build/bin/routeGuideClient 127.0.0.1 50052
           kill $pid
 
+  stress-framing:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          test: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Install native deps (zlib / OpenSSL)
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config zlib1g-dev
+      - name: Stress demos + peer-framing matrix (hard gate)
+        run: |
+          chmod +x scripts/run-stress-demos.sh
+          ./scripts/run-stress-demos.sh
+
   interop-grpc-go:
     runs-on: ubuntu-latest
     needs: build-test
