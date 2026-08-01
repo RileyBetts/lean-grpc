@@ -21,4 +21,22 @@ def register (s : Server) (status : ServingStatus := .serving) : Server :=
     let body := Proto.Wire.encodeUInt32 ByteArray.empty 1 status.toUInt32
     return (body, Status.ok)
 
+/-- Register `grpc.health.v1.Health/Watch` (server-streaming `HealthCheckResponse`).
+    `statusRef` lets the server flip serving status at runtime (e.g. during drain) and have
+    both `Check` and `Watch` observe the change. This minimal server-streaming subset emits
+    the current status once per call rather than keeping the stream open across future
+    transitions — enough to exercise the RPC shape end to end. -/
+def registerWatch (s : Server) (statusRef : IO.Ref ServingStatus) : Server :=
+  Server.registerServerStream s "grpc.health.v1.Health" "Watch" fun _req => do
+    let status ← statusRef.get
+    let body := Proto.Wire.encodeUInt32 ByteArray.empty 1 status.toUInt32
+    return (#[body], Status.ok)
+
+/-- Register `Check` + `Watch` sharing one live status ref. -/
+def registerWithWatch (s : Server) (statusRef : IO.Ref ServingStatus) : Server :=
+  let s := Server.register s "grpc.health.v1.Health" "Check" fun _req => do
+    let status ← statusRef.get
+    return (Proto.Wire.encodeUInt32 ByteArray.empty 1 status.toUInt32, Status.ok)
+  registerWatch s statusRef
+
 end Grpc.Health

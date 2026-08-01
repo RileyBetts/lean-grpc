@@ -414,7 +414,8 @@ def handleFrame (st : ConnState) (f : Frame) : Except String (ConnState × Array
     | none => return connError st errProtocol  -- idle
     | some s =>
       if s.state == .idle then return connError st errProtocol
-      return (st.upsertStream { s with state := .closed }, #[])
+      let code := (Bytes.BE.readU32 (Bytes.Slice.ofByteArray f.payload) 0).getD 0
+      return (st.upsertStream { s with state := .closed, rstErrorCode := some code }, #[])
 
   | .goAway =>
     if f.streamId != 0 then return connError st errProtocol

@@ -36,9 +36,11 @@ def encodeId (payload : ByteArray) : ByteArray :=
   | .ok b => b
   | .error _ => ByteArray.empty
 
-/-- Decode one message; returns payload and remaining bytes. -/
-def decodeOne (buf : Bytes.Slice) (allowGzip : Bool := true) :
-    Except String (ByteArray × Bytes.Slice) := do
+/-- Decode one message; returns payload and remaining bytes.
+    `alg` is the algorithm advertised via `grpc-encoding` for compressed frames
+    (defaults to gzip, the common case). -/
+def decodeOne (buf : Bytes.Slice) (allowGzip : Bool := true)
+    (alg : Compression.Algorithm := .gzip) : Except String (ByteArray × Bytes.Slice) := do
   if buf.size < 5 then throw "short grpc frame"
   let compressed := buf.get! 0 != 0
   let len ← Bytes.BE.readU32 buf 1 |>.elim (throw "len") pure
@@ -49,14 +51,14 @@ def decodeOne (buf : Bytes.Slice) (allowGzip : Bool := true) :
     if !compressed then
       pure body
     else if allowGzip then
-      Compression.decompress .gzip body
+      Compression.decompress alg body
     else
       throw "compression not supported (identity only)"
   return (payload, buf.sub (5 + n) (buf.size - 5 - n))
 
-/-- Decode one message with peer-compatible gzip inflate. -/
-def decodeOneIO (buf : Bytes.Slice) (allowGzip : Bool := true) :
-    IO (Except String (ByteArray × Bytes.Slice)) := do
+/-- Decode one message with peer-compatible inflate for `alg` (default gzip). -/
+def decodeOneIO (buf : Bytes.Slice) (allowGzip : Bool := true)
+    (alg : Compression.Algorithm := .gzip) : IO (Except String (ByteArray × Bytes.Slice)) := do
   if buf.size < 5 then return .error "short grpc frame"
   let compressed := buf.get! 0 != 0
   match Bytes.BE.readU32 buf 1 with
@@ -71,26 +73,28 @@ def decodeOneIO (buf : Bytes.Slice) (allowGzip : Bool := true) :
     else if !allowGzip then
       return .error "compression not supported (identity only)"
     else
-      match ← Compression.decompressIO .gzip body with
+      match ← Compression.decompressIO alg body with
       | .error e => return .error e
       | .ok payload => return .ok (payload, rest)
 
 /-- Decode all messages in a buffer. -/
-def decodeAll (buf : Bytes.Slice) (allowGzip : Bool := true) : Except String (Array ByteArray) := do
+def decodeAll (buf : Bytes.Slice) (allowGzip : Bool := true)
+    (alg : Compression.Algorithm := .gzip) : Except String (Array ByteArray) := do
   let mut s := buf
   let mut out : Array ByteArray := #[]
   while !s.isEmpty do
-    let (p, rest) ← decodeOne s allowGzip
+    let (p, rest) ← decodeOne s allowGzip alg
     out := out.push p
     s := rest
   return out
 
-/-- Decode all messages, preferring peer gzip inflate for compressed flags. -/
-def decodeAllIO (buf : Bytes.Slice) (allowGzip : Bool := true) : IO (Except String (Array ByteArray)) := do
+/-- Decode all messages, preferring peer inflate for `alg` (default gzip) on compressed frames. -/
+def decodeAllIO (buf : Bytes.Slice) (allowGzip : Bool := true)
+    (alg : Compression.Algorithm := .gzip) : IO (Except String (Array ByteArray)) := do
   let mut s := buf
   let mut out : Array ByteArray := #[]
   while !s.isEmpty do
-    match ← decodeOneIO s allowGzip with
+    match ← decodeOneIO s allowGzip alg with
     | .error e => return .error e
     | .ok (p, rest) =>
       out := out.push p
@@ -98,14 +102,15 @@ def decodeAllIO (buf : Bytes.Slice) (allowGzip : Bool := true) : IO (Except Stri
   return .ok out
 
 /-- Decode all messages preserving each frame's Compressed-Flag. -/
-def decodeAllWithFlagsIO (buf : Bytes.Slice) (allowGzip : Bool := true) :
+def decodeAllWithFlagsIO (buf : Bytes.Slice) (allowGzip : Bool := true)
+    (alg : Compression.Algorithm := .gzip) :
     IO (Except String (Array (Bool × ByteArray))) := do
   let mut s := buf
   let mut out : Array (Bool × ByteArray) := #[]
   while !s.isEmpty do
     if s.size < 5 then return .error "short grpc frame"
     let compressed := s.get! 0 != 0
-    match ← decodeOneIO s allowGzip with
+    match ← decodeOneIO s allowGzip alg with
     | .error e => return .error e
     | .ok (p, rest) =>
       out := out.push (compressed, p)

@@ -38,6 +38,28 @@ def main (args : List String) : IO Unit := do
     return
   let ch ← Grpc.Channel.connectH2c host port
   match case_ with
+  | "cacheable_unary" =>
+    -- interop `cacheable_unary`: safe/idempotent calls use HTTP GET instead of POST.
+    -- `EmptyCall` needs no request payload (Empty encodes to zero bytes), so no
+    -- query-string message encoding is needed for this wire-level GET check.
+    let c ← Grpc.Channel.get ch
+    let headers : Array Hpack.HeaderField := #[
+      Grpc.Metadata.methodGet,
+      Grpc.Metadata.schemeHttp,
+      ⟨Grpc.Metadata.ascii ":authority", Grpc.Metadata.ascii host⟩,
+      Grpc.Metadata.path "grpc.testing.TestService" "EmptyCall",
+      Grpc.Metadata.contentTypeGrpc,
+      Grpc.Metadata.teTrailers,
+      Grpc.Metadata.userAgent,
+      ⟨Grpc.Metadata.ascii "x-user-ip", Grpc.Metadata.ascii "1.2.3.4"⟩
+    ]
+    let resp ← H2.Client.unary c headers ByteArray.empty
+    let mut st := "0"
+    for h in resp.trailers do
+      let (n, v) := headerAscii h
+      if n == "grpc-status" then st := v
+    if st != "0" && st != "" then throw (IO.userError s!"cacheable_unary status {st}")
+    IO.println "cacheable_unary OK"
   | "empty_unary" =>
     let res ← Grpc.Channel.unary ch "grpc.testing.TestService" "EmptyCall" ByteArray.empty
     if res.status.code != .ok then throw (IO.userError "empty_unary failed")
@@ -73,11 +95,13 @@ def main (args : List String) : IO Unit := do
       if n == "x-grpc-test-echo-initial" && v == "test_initial_metadata_value" then
         sawInit := true
     if !sawInit then throw (IO.userError "missing initial md")
-    let mut sawTrail := false
-    for h in res.trailers do
-      let (n, _) := headerAscii h
-      if n == "x-grpc-test-echo-trailing-bin" then sawTrail := true
-    if !sawTrail then throw (IO.userError "missing trailing md")
+    let trailMd : Grpc.Metadata := { entries := res.trailers }
+    match Grpc.Metadata.getBin? trailMd "x-grpc-test-echo-trailing-bin" with
+    | .error e => throw (IO.userError s!"trailing-bin decode {e}")
+    | .ok none => throw (IO.userError "missing trailing md")
+    | .ok (some b) =>
+      if b != ByteArray.mk #[0x0a, 0x0b, 0x0a, 0x0b, 0x0a, 0x0b] then
+        throw (IO.userError s!"trailing-bin mismatch {b.toList}")
     IO.println "custom_metadata OK"
   | "cancel_after_begin" =>
     let c ← Grpc.Channel.get ch
@@ -92,6 +116,12 @@ def main (args : List String) : IO Unit := do
     let sid ← H2.Client.startRequest c headers (Grpc.Message.encodeId (
       Proto.SimpleRequest.encode { responseSize := 10 })) true
     H2.Client.resetStream c sid 0x8
+    let resp ← H2.Client.awaitResponse c sid
+    let mut st := ""
+    for h in resp.trailers do
+      let (n, v) := headerAscii h
+      if n == "grpc-status" then st := v
+    if st != "1" then throw (IO.userError s!"cancel_after_begin expected CANCELLED got {st}")
     IO.println "cancel_after_begin OK"
   | "server_streaming" =>
     let req := Proto.StreamingOutputCallRequest.encode {
@@ -177,7 +207,15 @@ def main (args : List String) : IO Unit := do
     match ← Grpc.Stream.StreamReader.recv? stream.reader with
     | none => throw (IO.userError "expected first response before cancel")
     | some _ => pure ()
-    H2.Client.resetStream (← Grpc.Channel.get ch) stream.writer.streamId 0x8
+    let c ← Grpc.Channel.get ch
+    H2.Client.resetStream c stream.writer.streamId 0x8
+    let resp ← H2.Client.awaitResponse c stream.writer.streamId
+    let mut st := ""
+    for h in resp.trailers do
+      let (n, v) := headerAscii h
+      if n == "grpc-status" then st := v
+    if st != "1" then
+      throw (IO.userError s!"cancel_after_first_response expected CANCELLED got {st}")
     IO.println "cancel_after_first_response OK"
   | "timeout_on_sleeping_server" =>
     let req := Proto.StreamingOutputCallRequest.encode {
@@ -357,7 +395,7 @@ def main (args : List String) : IO Unit := do
       throw (IO.userError s!"per_rpc user `{resp.username}`")
     IO.println "per_rpc_creds OK"
   | "orca_per_rpc" =>
-    let report : Grpc.Orca.Report := { cpuUtilizationMillis := 821, memoryUtilizationMillis := 585 }
+    let report : Grpc.Orca.Report := { cpuUtilization := 0.821, memUtilization := 0.585 }
     let req := Proto.SimpleRequest.encode {
       responseSize := 1, payloadBody := zeros 1
       orcaPerQueryReport := Grpc.Orca.Report.encode report
@@ -367,8 +405,8 @@ def main (args : List String) : IO Unit := do
     match Grpc.Orca.reportFromTrailer? res.trailers with
     | none => throw (IO.userError "missing ORCA trailer")
     | some r =>
-      if r.cpuUtilizationMillis != 821 then throw (IO.userError "orca cpu")
-      if r.memoryUtilizationMillis != 585 then throw (IO.userError "orca mem")
+      if r.cpuUtilization != 0.821 then throw (IO.userError "orca cpu")
+      if r.memUtilization != 0.585 then throw (IO.userError "orca mem")
     IO.println "orca_per_rpc OK"
   | "xds_static_unary" =>
     let bootJson := "{\"clusters\":{\"test\":[\"" ++ host ++ ":" ++ toString port.toNat ++ "\"]}}"
@@ -392,4 +430,25 @@ def main (args : List String) : IO Unit := do
     let res ← Grpc.Channel.unary ch2 "grpc.testing.TestService" "EmptyCall" ByteArray.empty
     if res.status.code != .ok then throw (IO.userError "ads unary")
     IO.println "xds_ads_unary OK"
+  | "xds_ads_chain_unary" =>
+    -- Full LDS → RDS → CDS → EDS chain over one ADS session, then an EmptyCall against the
+    -- resolved endpoint.
+    let adsTarget := (← IO.getEnv "LEAN_GRPC_FAKE_ADS").getD "127.0.0.1:18000"
+    let adsAddr ← IO.ofExcept (Grpc.Resolver.parseTarget adsTarget)
+    let addrs ← Grpc.XdsAds.resolveChain adsAddr "test"
+    if addrs.isEmpty then throw (IO.userError "ads chain empty")
+    let a := addrs[0]!
+    let ch2 ← Grpc.Channel.connectH2c a.host a.port
+    let res ← Grpc.Channel.unary ch2 "grpc.testing.TestService" "EmptyCall" ByteArray.empty
+    if res.status.code != .ok then throw (IO.userError "ads chain unary")
+    IO.println "xds_ads_chain_unary OK"
+  | "xds_ads_nack" =>
+    -- FakeAds serves a resource with a deliberately mismatched inner type_url for the
+    -- well-known name `nack-test`; the client must detect it, NACK, and surface an error.
+    let adsTarget := (← IO.getEnv "LEAN_GRPC_FAKE_ADS").getD "127.0.0.1:18000"
+    let adsAddr ← IO.ofExcept (Grpc.Resolver.parseTarget adsTarget)
+    let session ← Grpc.XdsAds.Session.open adsAddr
+    match ← session.fetchTyped Grpc.Xds.cdsTypeUrl #["nack-test"] with
+    | .ok _ => throw (IO.userError "expected NACK on mismatched type_url")
+    | .error _ => IO.println "xds_ads_nack OK"
   | other => throw (IO.userError s!"unknown case {other}")

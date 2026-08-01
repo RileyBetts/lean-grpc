@@ -29,17 +29,27 @@ def StatusCode.ofUInt32 : UInt32 → StatusCode
 structure Status where
   code : StatusCode := .ok
   message : String := ""
-  deriving Inhabited, BEq
+  /-- Optional encoded `google.rpc.Status` details (wire bytes of details-only payload). -/
+  detailsBin : Option ByteArray := none
+  deriving Inhabited
+
+instance : BEq Status where
+  beq a b := a.code == b.code && a.message == b.message &&
+    match a.detailsBin, b.detailsBin with
+    | none, none => true
+    | some x, some y => x == y
+    | _, _ => false
 
 def Status.ok : Status := {}
-def Status.unimplemented (msg : String := "") : Status := ⟨.unimplemented, msg⟩
-def Status.internal (msg : String) : Status := ⟨.internal, msg⟩
-def Status.resourceExhausted (msg : String) : Status := ⟨.resourceExhausted, msg⟩
-def Status.cancelled (msg : String := "") : Status := ⟨.cancelled, msg⟩
+def Status.unimplemented (msg : String := "") : Status := { code := .unimplemented, message := msg }
+def Status.internal (msg : String) : Status := { code := .internal, message := msg }
+def Status.resourceExhausted (msg : String) : Status := { code := .resourceExhausted, message := msg }
+def Status.cancelled (msg : String := "") : Status := { code := .cancelled, message := msg }
 def Status.deadlineExceeded (msg : String := "deadline exceeded") : Status :=
-  ⟨.deadlineExceeded, msg⟩
-def Status.unavailable (msg : String := "") : Status := ⟨.unavailable, msg⟩
-def Status.invalidArgument (msg : String := "") : Status := ⟨.invalidArgument, msg⟩
+  { code := .deadlineExceeded, message := msg }
+def Status.unavailable (msg : String := "") : Status := { code := .unavailable, message := msg }
+def Status.invalidArgument (msg : String := "") : Status := { code := .invalidArgument, message := msg }
+def Status.permissionDenied (msg : String := "") : Status := { code := .permissionDenied, message := msg }
 
 end Grpc
 

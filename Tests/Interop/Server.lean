@@ -94,7 +94,7 @@ def main : IO Unit := do
         let code := Grpc.StatusCode.ofUInt32 st.code
         return {
           headers := respHeaders
-          trailers := addTrailing ⟨code, st.message⟩
+          trailers := addTrailing { code, message := st.message : Grpc.Status }
           finished := true
         }
       let body := zeros req.responseSize.toNat
@@ -200,7 +200,7 @@ def main : IO Unit := do
             let code := Grpc.StatusCode.ofUInt32 st.code
             return {
               headers := if headersSent then #[] else respHeaders
-              trailers := addTrailing ⟨code, st.message⟩
+              trailers := addTrailing { code, message := st.message : Grpc.Status }
               finished := true
             }
         for sz in req.responseParameters do

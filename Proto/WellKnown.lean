@@ -62,4 +62,34 @@ def decodeMap (fields : Array Wire.Field) (field : Nat) : Except String (Array M
     out := out.push (← MapEntry.decode nested)
   return out
 
+/-- google.rpc.Status (code, message, details). -/
+structure RpcStatus where
+  code : Int32 := 0
+  message : String := ""
+  details : Array AnyMsg := #[]
+  deriving Inhabited
+
+def RpcStatus.encode (s : RpcStatus) : ByteArray :=
+  Id.run do
+    let mut acc := ByteArray.empty
+    if s.code != 0 then
+      -- protobuf int32 as zigzag-free varint (signed via UInt32 bit pattern)
+      acc := Wire.encodeUInt32 acc 1 (s.code.toUInt32)
+    if !s.message.isEmpty then acc := Wire.encodeString acc 2 s.message
+    for d in s.details do
+      acc := Wire.encodeBytes acc 3 (AnyMsg.encode d)
+    return acc
+
+def RpcStatus.decode (b : ByteArray) : Except String RpcStatus := do
+  let fields ← Wire.decodeFields (Bytes.Slice.ofByteArray b)
+  let mut details : Array AnyMsg := #[]
+  for nested in Wire.fieldBytesMany fields 3 do
+    details := details.push (← AnyMsg.decode nested)
+  let codeU := (Wire.fieldUInt32? fields 1).getD 0
+  return {
+    code := codeU.toInt32
+    message := (Wire.fieldString? fields 2).getD ""
+    details
+  }
+
 end Proto.WellKnown

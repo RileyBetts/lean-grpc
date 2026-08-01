@@ -58,6 +58,12 @@ lean_exe trailersServer where
 lean_exe trailersLoopback where
   root := `Tests.TrailersLoopback
 
+lean_exe tlsServer where
+  root := `Tests.TlsServer
+
+lean_exe tlsLoopback where
+  root := `Tests.TlsLoopback
+
 lean_exe grpcTests where
   root := `Tests.GrpcMain
 
@@ -100,3 +106,6 @@ lean_exe fakeAdsServer where
 
 lean_exe adcSmoke where
   root := `Tests.AdcSmoke
+
+lean_exe adcLive where
+  root := `Tests.AdcLive

@@ -137,6 +137,16 @@ def addBin (m : Metadata) (name : String) (value : ByteArray) : Metadata :=
   let n := if name.endsWith "-bin" then name else name ++ "-bin"
   add m n (base64Encode value)
 
+/-- Decode a `-bin` metadata value (accepts padded or unpadded base64). -/
+def getBin? (m : Metadata) (name : String) : Except String (Option ByteArray) := do
+  let n := if name.endsWith "-bin" then name else name ++ "-bin"
+  match get? m n with
+  | none => pure none
+  | some b64 =>
+    -- Split on commas (joined duplicate binary headers) and take first chunk.
+    let first := (b64.splitOn ",").headD b64
+    some <$> base64Decode first
+
 def contentTypeGrpc : Hpack.HeaderField :=
   ⟨ascii "content-type", ascii "application/grpc+proto"⟩
 
@@ -144,8 +154,16 @@ def path (service method : String) : Hpack.HeaderField :=
   ⟨ascii ":path", ascii s!"/{service}/{method}"⟩
 
 def methodPost : Hpack.HeaderField := ⟨ascii ":method", ascii "POST"⟩
+/-- `GET` verb for safe/cacheable unary calls (interop `cacheable_unary`). -/
+def methodGet : Hpack.HeaderField := ⟨ascii ":method", ascii "GET"⟩
 def schemeHttp : Hpack.HeaderField := ⟨ascii ":scheme", ascii "http"⟩
+def schemeHttps : Hpack.HeaderField := ⟨ascii ":scheme", ascii "https"⟩
 def teTrailers : Hpack.HeaderField := ⟨ascii "te", ascii "trailers"⟩
+def userAgent (version : String := "0.4.0") : Hpack.HeaderField :=
+  ⟨ascii "user-agent", ascii s!"grpc-lean/{version}"⟩
+
+def http415 : Array Hpack.HeaderField :=
+  #[⟨ascii ":status", ascii "415"⟩, contentTypeGrpc]
 
 def timeout (duration : String) : Hpack.HeaderField :=
   ⟨ascii "grpc-timeout", ascii duration⟩
@@ -178,12 +196,21 @@ def parseTimeoutMs (t : String) : Option Nat :=
         | _ => none
 
 def statusHeaders (st : Status) : Array Hpack.HeaderField :=
-  let base := #[⟨ascii "grpc-status", ascii (toString st.code.toUInt32)⟩]
-  if st.message.isEmpty then base
-  else base.push ⟨ascii "grpc-message", ascii (percentEncode st.message)⟩
+  Id.run do
+    let mut base := #[⟨ascii "grpc-status", ascii (toString st.code.toUInt32)⟩]
+    if !st.message.isEmpty then
+      base := base.push ⟨ascii "grpc-message", ascii (percentEncode st.message)⟩
+    if let some details := st.detailsBin then
+      if st.code != .ok then
+        base := base.push ⟨ascii "grpc-status-details-bin", ascii (base64Encode details)⟩
+    return base
 
 def http200 : Array Hpack.HeaderField :=
   #[⟨ascii ":status", ascii "200"⟩, contentTypeGrpc]
+
+/-- Trailers-only error: `:status` + content-type + grpc-status in one HEADERS+END_STREAM. -/
+def trailersOnly (st : Status) : Array Hpack.HeaderField :=
+  http200 ++ statusHeaders st
 
 def toFields (m : Metadata) : Array Hpack.HeaderField := m.entries
 

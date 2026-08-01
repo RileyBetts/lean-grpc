@@ -49,6 +49,8 @@ structure Stream where
   requestHeaders : Array Hpack.HeaderField
   /-- Decoded trailers (set when trailer END_HEADERS completes). -/
   decodedTrailers : Array Hpack.HeaderField
+  /-- Peer RST_STREAM error code when the stream was reset (`none` = not reset). -/
+  rstErrorCode : Option UInt32 := none
   deriving Inhabited
 
 namespace Stream
@@ -74,7 +76,8 @@ def create (id : UInt32) (sendInit recvInit : UInt32) : Stream :=
     dataConsumed := 0
     contentLength := none
     requestHeaders := #[]
-    decodedTrailers := #[] }
+    decodedTrailers := #[]
+    rstErrorCode := none }
 
 def isClosed (s : Stream) : Bool := s.state == .closed
 

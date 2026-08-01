@@ -14,6 +14,18 @@ def edsTypeUrl : String :=
 def cdsTypeUrl : String :=
   "type.googleapis.com/envoy.config.cluster.v3.Cluster"
 
+/-- LDS type URL. -/
+def ldsTypeUrl : String :=
+  "type.googleapis.com/envoy.config.listener.v3.Listener"
+
+/-- RDS type URL. -/
+def rdsTypeUrl : String :=
+  "type.googleapis.com/envoy.config.route.v3.RouteConfiguration"
+
+/-- SDS type URL. -/
+def sdsTypeUrl : String :=
+  "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret"
+
 /-- Minimal xDS bootstrap: static clusters and/or ADS servers. -/
 structure Bootstrap where
   /-- Map from authority/resource name → addresses. -/

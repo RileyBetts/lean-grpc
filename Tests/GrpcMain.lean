@@ -3,10 +3,23 @@ Copyright (c) 2026 RileyBetts. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Grpc
+import H2
 import Proto
 import Bytes.Slice
 
-def main : IO Unit := do
+/-- Internal helper mode used by the `LEAN_GRPC_RESOLVE_ADDRS` test below: since
+    the resolver override is read from the process environment, we re-exec this
+    binary as a subprocess with the override set rather than mutating the
+    running process's own environment (which Lean's `IO` does not expose). -/
+def runResolverEnvCheck : IO Unit := do
+  let addrs ← Grpc.Resolver.resolve "dns:///ignored.example:1234"
+  for a in addrs do
+    IO.println s!"{a.host}:{a.port}"
+
+def main (args : List String) : IO Unit := do
+  if args == ["--resolver-env-check"] then
+    runResolverEnvCheck
+    return
   let msg := Grpc.Message.encodeId (Proto.HelloRequest.encode { name := "x" })
   match Grpc.Message.decodeOne (Bytes.Slice.ofByteArray msg) with
   | .error e => throw (IO.userError e)
@@ -39,6 +52,46 @@ def main : IO Unit := do
     let r ← IO.ofExcept (Proto.HelloRequest.decode p)
     if r.name != "gz" then throw (IO.userError "stored via peer path")
 
+  -- deflate (zlib) round-trip, pure + peer-compatible
+  let rawDf := Proto.HelloRequest.encode { name := "df" }
+  let dfMsg ← IO.ofExcept (Grpc.Message.encode rawDf .deflate)
+  match Grpc.Message.decodeOne (Bytes.Slice.ofByteArray dfMsg) true .deflate with
+  | .error e => throw (IO.userError e)
+  | .ok (p, _) =>
+    let r ← IO.ofExcept (Proto.HelloRequest.decode p)
+    if r.name != "df" then throw (IO.userError "deflate name")
+  let dfPeer ← Grpc.Message.encodeIO rawDf .deflate
+  match ← Grpc.Message.decodeOneIO (Bytes.Slice.ofByteArray dfPeer) true .deflate with
+  | .error e => throw (IO.userError e)
+  | .ok (p, _) =>
+    let r ← IO.ofExcept (Proto.HelloRequest.decode p)
+    if r.name != "df" then throw (IO.userError "deflate peer name")
+
+  -- snappy (literal framing) round-trip
+  let rawSn := Proto.HelloRequest.encode { name := "sn" }
+  let snMsg ← IO.ofExcept (Grpc.Message.encode rawSn .snappy)
+  match Grpc.Message.decodeOne (Bytes.Slice.ofByteArray snMsg) true .snappy with
+  | .error e => throw (IO.userError e)
+  | .ok (p, _) =>
+    let r ← IO.ofExcept (Proto.HelloRequest.decode p)
+    if r.name != "sn" then throw (IO.userError "snappy name")
+  -- exercise the multi-byte literal length path (> 60 bytes).
+  let bigSn := ByteArray.mk (Array.replicate 5000 (65 : UInt8))
+  let bigEnc := Grpc.Compression.snappyEncodeLiteral bigSn
+  match Grpc.Compression.snappyDecodeLiteral bigEnc with
+  | .error e => throw (IO.userError s!"snappy big {e}")
+  | .ok back => if back != bigSn then throw (IO.userError "snappy big roundtrip")
+
+  -- negotiate: gzip > deflate > snappy > identity
+  if Grpc.Compression.negotiate "identity,deflate,snappy,gzip" != .gzip then
+    throw (IO.userError "negotiate gzip priority")
+  if Grpc.Compression.negotiate "identity,deflate,snappy" != .deflate then
+    throw (IO.userError "negotiate deflate priority")
+  if Grpc.Compression.negotiate "identity,snappy" != .snappy then
+    throw (IO.userError "negotiate snappy priority")
+  if Grpc.Compression.negotiate "identity" != .identity then
+    throw (IO.userError "negotiate identity")
+
   -- percent encode/decode
   let enc := Grpc.Metadata.percentEncode "hello world/x"
   if !enc.contains '%' then throw (IO.userError s!"pct enc {enc}")
@@ -58,6 +111,59 @@ def main : IO Unit := do
   match Grpc.Metadata.parseTimeoutMs "1n" with
   | some 0 => pure ()
   | _ => throw (IO.userError "timeout n")
+  match Grpc.Metadata.parseTimeoutMs "1500u" with
+  | some 1 => pure ()
+  | _ => throw (IO.userError "timeout u")
+
+  -- getBin + status details
+  let md0 := Grpc.Metadata.addBin {} "custom-bin" (ByteArray.mk #[9, 8, 7])
+  match Grpc.Metadata.getBin? md0 "custom-bin" with
+  | .ok (some b) => if b != ByteArray.mk #[9, 8, 7] then throw (IO.userError "getBin")
+  | .ok none => throw (IO.userError "getBin missing")
+  | .error e => throw (IO.userError s!"getBin error {e}")
+  let stDet : Grpc.Status := { code := .internal, message := "boom" }
+  let detBytes := Grpc.StatusDetails.encode stDet
+  let rpc ← IO.ofExcept (Grpc.StatusDetails.decode detBytes .internal)
+  if rpc.message != "boom" then throw (IO.userError "status details")
+  match Grpc.StatusDetails.decode detBytes .cancelled with
+  | .error _ => pure ()
+  | .ok _ => throw (IO.userError "details should contradict")
+
+  -- user-agent / scheme helpers
+  let ua := Grpc.Metadata.userAgent "0.5.0"
+  let (uan, uav) :=
+    (String.ofList (ua.name.toList.map (fun b => Char.ofNat b.toNat)),
+     String.ofList (ua.value.toList.map (fun b => Char.ofNat b.toNat)))
+  if uan != "user-agent" || uav != "grpc-lean/0.5.0" then throw (IO.userError "ua")
+  let https := Grpc.Metadata.schemeHttps
+  let hv := String.ofList (https.value.toList.map (fun b => Char.ofNat b.toNat))
+  if hv != "https" then throw (IO.userError "scheme")
+
+  -- RST → status mapping
+  let rstTrailers := H2.Client.rstToTrailers 8
+  let mut rstCode := ""
+  for h in rstTrailers do
+    let n := String.ofList (h.name.toList.map (fun b => Char.ofNat b.toNat))
+    let v := String.ofList (h.value.toList.map (fun b => Char.ofNat b.toNat))
+    if n == "grpc-status" then rstCode := v
+  if rstCode != "1" then throw (IO.userError s!"rst cancel got {rstCode}")
+  let refused := H2.Client.rstToTrailers 7
+  let mut refusedCode := ""
+  for h in refused do
+    let n := String.ofList (h.name.toList.map (fun b => Char.ofNat b.toNat))
+    let v := String.ofList (h.value.toList.map (fun b => Char.ofNat b.toNat))
+    if n == "grpc-status" then refusedCode := v
+  if refusedCode != "14" then throw (IO.userError "rst refused")
+
+  -- trailers-only + 415 helpers
+  let to := Grpc.Metadata.trailersOnly (.unimplemented "x")
+  let mut saw415 := false
+  for h in Grpc.Metadata.http415 do
+    let n := String.ofList (h.name.toList.map (fun b => Char.ofNat b.toNat))
+    let v := String.ofList (h.value.toList.map (fun b => Char.ofNat b.toNat))
+    if n == ":status" && v == "415" then saw415 := true
+  if !saw415 then throw (IO.userError "http415")
+  if to.size < 3 then throw (IO.userError "trailersOnly")
 
   -- UTF-8 percent encode (special_status_message)
   let msg := "BMP ☺ emoji 😈"
@@ -99,7 +205,7 @@ def main : IO Unit := do
   let jwt := Grpc.Jwt.fixtureUnsigned "u@example.com"
   if Grpc.Jwt.usernameFromAuthorization s!"Bearer {jwt}" != "u@example.com" then
     throw (IO.userError "jwt claim")
-  let orca : Grpc.Orca.Report := { cpuUtilizationMillis := 1, memoryUtilizationMillis := 2 }
+  let orca : Grpc.Orca.Report := { cpuUtilization := 0.1, memUtilization := 0.2 }
   let orca2 ← IO.ofExcept (Grpc.Orca.Report.decode (Grpc.Orca.Report.encode orca))
   if orca2 != orca then throw (IO.userError "orca roundtrip")
   let boot := Grpc.Xds.parseBootstrap "{\"clusters\":{\"c\":[\"127.0.0.1:9\"]}}"
@@ -107,5 +213,81 @@ def main : IO Unit := do
   if xs.size != 1 then throw (IO.userError "xds resolve")
   let hedge := Grpc.ServiceConfig.parse "{\"hedgingPolicy\":{}}"
   if hedge.hedging.isNone then throw (IO.userError "hedge parse")
+
+  -- Balancer: round_robin advances through addresses in order and wraps;
+  -- pick_first always returns the first address without advancing.
+  let addrsRR : Array Grpc.Resolver.Address :=
+    #[{ host := "10.0.0.1", port := 50051 }, { host := "10.0.0.2", port := 50051 },
+      { host := "10.0.0.3", port := 50051 }]
+  let balRR0 := Grpc.Balancer.create .roundRobin addrsRR
+  let (p0, balRR1) := Grpc.Balancer.pick balRR0
+  let (p1, balRR2) := Grpc.Balancer.pick balRR1
+  let (p2, balRR3) := Grpc.Balancer.pick balRR2
+  let (p3, _) := Grpc.Balancer.pick balRR3
+  if p0 != some addrsRR[0]! then throw (IO.userError "rr pick 0")
+  if p1 != some addrsRR[1]! then throw (IO.userError "rr pick 1")
+  if p2 != some addrsRR[2]! then throw (IO.userError "rr pick 2")
+  if p3 != some addrsRR[0]! then throw (IO.userError "rr pick wrap")
+  let balPF0 := Grpc.Balancer.create .pickFirst addrsRR
+  let (pf0, balPF1) := Grpc.Balancer.pick balPF0
+  let (pf1, _) := Grpc.Balancer.pick balPF1
+  if pf0 != some addrsRR[0]! then throw (IO.userError "pick_first 0")
+  if pf1 != some addrsRR[0]! then throw (IO.userError "pick_first stays")
+
+  -- ServiceConfig: fuller JSON with loadBalancingConfig, retryPolicy (named
+  -- status codes, fractional-second durations), and methodConfig timeout.
+  let fullCfg := Grpc.ServiceConfig.parse "{\
+\"loadBalancingConfig\":[{\"round_robin\":{}}],\
+\"methodConfig\":[{\
+\"timeout\":\"0.5s\",\
+\"retryPolicy\":{\
+\"maxAttempts\":4,\
+\"initialBackoff\":\"0.1s\",\
+\"maxBackoff\":\"1s\",\
+\"backoffMultiplier\":2,\
+\"retryableStatusCodes\":[\"UNAVAILABLE\",\"ABORTED\"]\
+}\
+}]\
+}"
+  if fullCfg.loadBalancingPolicy != "round_robin" then
+    throw (IO.userError s!"svcconfig lb from array {fullCfg.loadBalancingPolicy}")
+  if fullCfg.timeoutMs != some 500 then
+    throw (IO.userError s!"svcconfig methodConfig timeout {fullCfg.timeoutMs}")
+  match fullCfg.retry with
+  | none => throw (IO.userError "svcconfig retry missing")
+  | some rp =>
+    if rp.maxAttempts != 4 then throw (IO.userError s!"svcconfig retry maxAttempts {rp.maxAttempts}")
+    if rp.initialBackoffMs != 100 then
+      throw (IO.userError s!"svcconfig retry initialBackoff {rp.initialBackoffMs}")
+    if rp.maxBackoffMs != 1000 then
+      throw (IO.userError s!"svcconfig retry maxBackoff {rp.maxBackoffMs}")
+    if rp.retryableStatusCodes != #[14, 10] then
+      throw (IO.userError s!"svcconfig retry codes {rp.retryableStatusCodes}")
+  -- Hedging policy with explicit fields.
+  let hedgeCfg := Grpc.ServiceConfig.parse
+    "{\"methodConfig\":[{\"hedgingPolicy\":{\"maxAttempts\":3,\"hedgingDelay\":\"10ms\",\"nonFatalStatusCodes\":[\"UNAVAILABLE\"]}}]}"
+  match hedgeCfg.hedging with
+  | none => throw (IO.userError "svcconfig hedging missing")
+  | some hp =>
+    if hp.maxAttempts != 3 then throw (IO.userError s!"svcconfig hedge maxAttempts {hp.maxAttempts}")
+    if hp.hedgingDelayMs != 10 then throw (IO.userError s!"svcconfig hedge delay {hp.hedgingDelayMs}")
+  -- Malformed JSON falls back to defaults rather than throwing.
+  let badCfg := Grpc.ServiceConfig.parse "not json"
+  if badCfg.loadBalancingPolicy != "pick_first" then throw (IO.userError "svcconfig bad json fallback")
+
+  -- Resolver: LEAN_GRPC_RESOLVE_ADDRS overrides DNS with a deterministic list.
+  -- Exercised via a re-exec'd subprocess since Lean's `IO` has no way to
+  -- mutate the current process's environment.
+  let selfPath ← IO.appPath
+  let envOut ← IO.Process.output {
+    cmd := selfPath.toString
+    args := #["--resolver-env-check"]
+    env := #[("LEAN_GRPC_RESOLVE_ADDRS", some "10.9.0.1:9001, 10.9.0.2:9002")]
+  }
+  if envOut.exitCode != 0 then
+    throw (IO.userError s!"resolver env override subprocess failed: {envOut.stderr}")
+  let expected := "10.9.0.1:9001\n10.9.0.2:9002\n"
+  if envOut.stdout != expected then
+    throw (IO.userError s!"resolver env override got {envOut.stdout}")
 
   IO.println "grpcTests OK"

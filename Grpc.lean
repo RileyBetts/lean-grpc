@@ -7,6 +7,7 @@ import Hpack
 import H2
 import Proto
 import Grpc.Status
+import Grpc.StatusDetails
 import Grpc.Compression
 import Grpc.Message
 import Grpc.Metadata
@@ -31,7 +32,11 @@ import Grpc.Orca
 import Grpc.Xds
 import Grpc.Xds.Discovery
 import Grpc.XdsAds
+import Grpc.BinaryLog
+import Grpc.Stats
+import Grpc.Grpclb
+import Grpc.Interceptor
 
 namespace Grpc
-def version : String := "0.4.0"
+def version : String := "0.5.0"
 end Grpc

@@ -15,7 +15,7 @@ jobs:
       - name: Install OpenSSL headers (TLS FFI)
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
       - name: Build libraries and tests
-        run: lake build bytesTests hpackTests h2Tests grpcTests trailersServer trailersLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary benchSoak opsSmoke h2specServer routeGuideServer routeGuideClient adcSmoke fakeAdsServer
+        run: lake build bytesTests hpackTests h2Tests grpcTests trailersServer trailersLoopback tlsServer tlsLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary benchSoak opsSmoke h2specServer routeGuideServer routeGuideClient adcSmoke fakeAdsServer
       - name: Unit tests
         run: |
           ./.lake/build/bin/bytesTests
@@ -25,19 +25,23 @@ jobs:
           ./.lake/build/bin/trailersLoopback
       - name: Codegen smoke
         run: |
-          mkdir -p /tmp/lean-grpc-gen
-          LEAN_GRPC_OUT=/tmp/lean-grpc-gen ./.lake/build/bin/protoc-gen-lean4-grpc examples/helloworld.proto
-          LEAN_GRPC_OUT=/tmp/lean-grpc-gen ./.lake/build/bin/protoc-gen-lean4-grpc examples/route_guide.proto
-          test -f /tmp/lean-grpc-gen/Generated.lean
-          grep -q SayHelloRequest /tmp/lean-grpc-gen/Generated.lean
+          mkdir -p /tmp/lean-grpc-gen-hw /tmp/lean-grpc-gen-rg
+          LEAN_GRPC_OUT=/tmp/lean-grpc-gen-hw ./.lake/build/bin/protoc-gen-lean4-grpc examples/helloworld.proto
+          test -f /tmp/lean-grpc-gen-hw/Generated.lean
+          grep -qE 'SayHello|HelloRequest' /tmp/lean-grpc-gen-hw/Generated.lean
+          LEAN_GRPC_OUT=/tmp/lean-grpc-gen-rg ./.lake/build/bin/protoc-gen-lean4-grpc examples/route_guide.proto
+          test -f /tmp/lean-grpc-gen-rg/Generated.lean
+          chmod +x scripts/run-codegen-fixture.sh
+          ./scripts/run-codegen-fixture.sh
       - name: Native zlib + TLS
         run: |
           chmod +x scripts/build_native.sh scripts/gen-test-certs.sh scripts/interop-tls-go-lean.sh \
             scripts/fetch-openssl-headers.sh scripts/run-adc-smoke.sh scripts/run-xds-ads-smoke.sh \
-            scripts/mock-adc-server.py
+            scripts/run-soak.sh scripts/mock-adc-server.py
           ./scripts/build_native.sh
           export LEAN_GRPC_ZLIB_HELPER="$PWD/.lake/build/native/zlib_helper"
           ./.lake/build/bin/grpcTests
+          ./.lake/build/bin/tlsLoopback
       - name: Lean↔Lean interop cases
         run: |
           ./.lake/build/bin/interopServer &
@@ -48,7 +52,7 @@ jobs:
                    cancel_after_first_response special_status_message unimplemented_method \
                    unimplemented_service timeout_on_sleeping_server client_compressed_unary \
                    server_compressed_unary client_compressed_streaming server_compressed_streaming \
-                   pick_first_unary jwt_token_creds oauth2_auth_token per_rpc_creds \
+                   pick_first_unary cacheable_unary jwt_token_creds oauth2_auth_token per_rpc_creds \
                    orca_per_rpc xds_static_unary; do
             ./.lake/build/bin/interopClient 127.0.0.1 10000 "$c"
           done
@@ -64,7 +68,7 @@ jobs:
           sleep 0.5
           ./.lake/build/bin/helloworldClient 127.0.0.1 50051 World
           ./.lake/build/bin/opsSmoke 127.0.0.1 50051
-          ./.lake/build/bin/benchSoak 127.0.0.1 50051 30
+          ./scripts/run-soak.sh
           kill $pid
           ./.lake/build/bin/routeGuideServer &
           pid=$!

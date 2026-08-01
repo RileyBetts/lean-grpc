@@ -2,6 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # Official grpc-go interop client cases supported by the stock `client` binary.
+# Note: `cacheable_unary` is intentionally omitted here — the official client's
+# assertions require the server to sit behind a real caching proxy (it expects
+# two back-to-back CacheableUnaryCall responses to be byte-identical), which is
+# out of scope for this smoke matrix. See docs/conformance.md.
 CASES=(
   empty_unary large_unary status_code_and_message custom_metadata cancel_after_begin
   server_streaming client_streaming ping_pong empty_stream

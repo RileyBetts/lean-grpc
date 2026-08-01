@@ -34,9 +34,73 @@ def parseTarget (target : String) : Except String Address := do
     | none => throw "bad port"
     | some p => pure { host, port := p.toUInt16 }
 
-/-- Resolve via getaddrinfo-style: for now returns the literal host (libc DNS at connect time). -/
+private def isAsciiWs (c : Char) : Bool := c == ' ' || c == '\t' || c == '\r'
+
+private def splitWs (s : String) : Array String :=
+  Id.run do
+    let mut out : Array String := #[]
+    let mut cur := ""
+    for c in s.toList do
+      if isAsciiWs c then
+        if !cur.isEmpty then
+          out := out.push cur
+          cur := ""
+      else
+        cur := cur.push c
+    if !cur.isEmpty then out := out.push cur
+    return out
+
+private def trimAsciiWs (s : String) : String :=
+  let cs := s.toList.dropWhile isAsciiWs
+  String.ofList (cs.reverse.dropWhile isAsciiWs).reverse
+
+/-- Resolve every distinct A/AAAA record for `host` via the system resolver
+    (`getent ahosts`, glibc's NSS-aware front-end to `getaddrinfo`). Returns
+    `#[]` on any failure (missing tool, NXDOMAIN, sandboxed environment, …) so
+    callers can fall back to the literal host. -/
+private def resolveMultiIP (host : String) (port : UInt16) : IO (Array Address) := do
+  try
+    let out ← IO.Process.output { cmd := "getent", args := #["ahosts", host] }
+    if out.exitCode != 0 then return #[]
+    let mut seen : Array String := #[]
+    let mut addrs : Array Address := #[]
+    for line in out.stdout.splitOn "\n" do
+      match (splitWs line)[0]? with
+      | none => pure ()
+      | some ip =>
+        if !(seen.any (· == ip)) then
+          seen := seen.push ip
+          addrs := addrs.push { host := ip, port }
+    return addrs
+  catch _ =>
+    return #[]
+
+/-- Deterministic resolver override for tests/CI: `LEAN_GRPC_RESOLVE_ADDRS` is a
+    comma-separated `host:port` list, e.g. `10.0.0.1:50051,10.0.0.2:50051`.
+    Takes priority over both DNS paths when set and non-empty. -/
+def resolveEnvOverride : IO (Option (Array Address)) := do
+  match ← IO.getEnv "LEAN_GRPC_RESOLVE_ADDRS" with
+  | none => pure none
+  | some s =>
+    let mut addrs : Array Address := #[]
+    for part in s.splitOn "," do
+      let p := trimAsciiWs part
+      if !p.isEmpty then
+        match parseTarget p with
+        | .ok a => addrs := addrs.push a
+        | .error _ => pure ()
+    pure (if addrs.isEmpty then none else some addrs)
+
+/-- Resolve a dial target to one or more addresses:
+    1. `LEAN_GRPC_RESOLVE_ADDRS` override (deterministic, test-friendly).
+    2. Multi-IP DNS via `getent ahosts` (enables round-robin across all A/AAAA records).
+    3. Single literal address (libc DNS resolves it lazily at connect time). -/
 def resolve (target : String) : IO (Array Address) := do
+  if let some addrs ← resolveEnvOverride then
+    return addrs
   let addr ← IO.ofExcept (parseTarget target)
-  return #[addr]
+  let multi ← resolveMultiIP addr.host addr.port
+  if multi.isEmpty then return #[addr]
+  return multi
 
 end Grpc.Resolver

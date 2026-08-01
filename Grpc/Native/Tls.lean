@@ -16,12 +16,19 @@ private opaque ListenerImpl.Pointed : NonemptyType.{0}
 def Listener : Type := ListenerImpl.Pointed.type
 instance : Nonempty Listener := ListenerImpl.Pointed.property
 
+/-- Dial a TLS+ALPN `h2` connection. `certPath`/`keyPath` present a client
+    certificate (mTLS) when both are non-empty; `caPath` verifies the server
+    when non-empty (otherwise the peer certificate is not checked). -/
 @[extern "lean_grpc_tls_dial"]
-opaque dial (host : @& String) (port : UInt16) (caPath : @& String) (serverName : @& String) :
-    IO Conn
+opaque dial (host : @& String) (port : UInt16) (caPath : @& String) (serverName : @& String)
+    (certPath : @& String := "") (keyPath : @& String := "") : IO Conn
 
+/-- Listen for TLS+ALPN `h2` connections presenting `certPath`/`keyPath` as the
+    server identity. When `clientCaPath` is non-empty, clients are required to
+    present a certificate verifiable against it (mTLS). -/
 @[extern "lean_grpc_tls_listen"]
-opaque listen (port : UInt16) (certPath : @& String) (keyPath : @& String) : IO Listener
+opaque listen (port : UInt16) (certPath : @& String) (keyPath : @& String)
+    (clientCaPath : @& String := "") : IO Listener
 
 @[extern "lean_grpc_tls_accept"]
 opaque accept (l : @& Listener) : IO Conn

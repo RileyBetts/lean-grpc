@@ -12,6 +12,7 @@ import Grpc.Message
 import Grpc.Metadata
 import Grpc.Stream
 import Grpc.Compression
+import Grpc.Tls
 
 namespace Grpc
 
@@ -70,8 +71,9 @@ private def encodeManyIO (msgs : Array ByteArray) (alg : Compression.Algorithm) 
     out := Bytes.Pool.pushBytes out (← Message.encodeIO m alg)
   return out
 
-def serveH2c (s : Server) (cfg : H2.ServerConfig := {}) : IO Unit := do
-  let handler : H2.StreamHandler := fun _streamId headers data endStream headersSent => do
+/-- Build the transport-agnostic `H2.StreamHandler` for `s`, shared by the
+    plaintext (`serveH2c`) and TLS (`serveTls`) entry points below. -/
+def handlerFor (s : Server) : H2.StreamHandler := fun _streamId headers data endStream headersSent => do
     if headersSent && !endStream && data.isEmpty then
       return { finished := false }
     -- Resolve path early so incremental bidi can respond before half-close.
@@ -103,24 +105,22 @@ def serveH2c (s : Server) (cfg : H2.ServerConfig := {}) : IO Unit := do
       if n == "grpc-accept-encoding" then acceptEnc := v
       if n == "grpc-encoding" then reqEnc := v
     if !(contentType.isEmpty || "application/grpc".isPrefixOf contentType) then
+      -- PROTOCOL-HTTP2: unsupported media type → HTTP 415 (trailers-only style).
       return {
-        headers := Metadata.http200
-        trailers := Metadata.statusHeaders (.internal "bad content-type")
+        headers := Metadata.http415
         finished := true
       }
     if let some ms := Metadata.parseTimeoutMs timeout then
       if ms == 0 then
         return {
-          headers := Metadata.http200
-          trailers := Metadata.statusHeaders (.deadlineExceeded)
+          headers := Metadata.trailersOnly (.deadlineExceeded)
           finished := true
         }
     let respAlg := Compression.negotiate acceptEnc
     match findHandler s path with
     | none =>
       return {
-        headers := Metadata.http200
-        trailers := Metadata.statusHeaders (.unimplemented s!"unknown {path}")
+        headers := Metadata.trailersOnly (.unimplemented s!"unknown {path}")
         finished := true
       }
     | some mh =>
@@ -130,10 +130,11 @@ def serveH2c (s : Server) (cfg : H2.ServerConfig := {}) : IO Unit := do
           trailers := Metadata.statusHeaders (.resourceExhausted "message too large")
           finished := true
         }
-      -- Peer gzip inflate when Compressed-Flag is set (grpc-encoding is advisory).
-      let _ := reqEnc
+      -- Peer-compatible inflate when Compressed-Flag is set, using the algorithm the
+      -- client declared via `grpc-encoding` (defaults to gzip when unset/unknown).
+      let reqAlg := (Compression.Algorithm.parse? reqEnc).getD .gzip
       let payloads ←
-        match ← Message.decodeAllIO (Bytes.Slice.ofByteArray data) with
+        match ← Message.decodeAllIO (Bytes.Slice.ofByteArray data) true reqAlg with
         | .ok ps => pure ps
         | .error e =>
           return {
@@ -201,7 +202,14 @@ def serveH2c (s : Server) (cfg : H2.ServerConfig := {}) : IO Unit := do
             body := ← encodeManyIO msgs respAlg
             finished := false
           }
-  H2.Server.listen cfg handler
+
+def serveH2c (s : Server) (cfg : H2.ServerConfig := {}) : IO Unit :=
+  H2.Server.listen cfg (handlerFor s)
+
+/-- Serve with in-process TLS+ALPN `h2` (see `Grpc.Tls.serveH2` for the
+    plaintext/mTLS decision based on `tlsCfg`). -/
+def serveTls (s : Server) (tlsCfg : Tls.Config) (cfg : H2.ServerConfig := {}) : IO Unit :=
+  Tls.serveH2 tlsCfg cfg (handlerFor s)
 
 end Server
 end Grpc

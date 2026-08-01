@@ -59,6 +59,20 @@ def encodeUInt32 (acc : ByteArray) (field : Nat) (v : UInt32) : ByteArray :=
 def encodeBool (acc : ByteArray) (field : Nat) (v : Bool) : ByteArray :=
   encodeUInt32 acc field (if v then 1 else 0)
 
+/-- Little-endian fixed64 (protobuf `fixed64`/`sfixed64`/`double` wire type 1). -/
+def encodeFixed64 (acc : ByteArray) (field : Nat) (bits : UInt64) : ByteArray :=
+  Id.run do
+    let mut out := encodeKey acc field .fixed64
+    let mut x := bits
+    for _ in [:8] do
+      out := out.push (x &&& 0xff).toUInt8
+      x := x >>> 8
+    return out
+
+/-- IEEE-754 `double` field. -/
+def encodeDouble (acc : ByteArray) (field : Nat) (v : Float) : ByteArray :=
+  encodeFixed64 acc field v.toBits
+
 structure Field where
   number : Nat
   wireType : WireType
@@ -114,6 +128,19 @@ def fieldUInt32? (fields : Array Field) (n : Nat) : Option UInt32 :=
         match decodeVarint (Bytes.Slice.ofByteArray f.payload) 0 with
         | .ok (v, _) => return some v.toUInt32
         | .error _ => pure ()
+    return none
+
+/-- IEEE-754 `double` field (little-endian fixed64 payload). -/
+def fieldDouble? (fields : Array Field) (n : Nat) : Option Float :=
+  Id.run do
+    for f in fields do
+      if f.number == n && f.wireType == .fixed64 && f.payload.size == 8 then
+        let mut bits : UInt64 := 0
+        let mut shift : UInt64 := 0
+        for i in [:8] do
+          bits := bits ||| ((f.payload.get! i).toUInt64 <<< shift)
+          shift := shift + 8
+        return some (Float.ofBits bits)
     return none
 
 def fieldBytes? (fields : Array Field) (n : Nat) : Option ByteArray :=

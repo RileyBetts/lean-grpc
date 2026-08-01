@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Fake ADS → Lean client resolves xds:///test → unary against Lean interop server.
+# Fake ADS exercising the full xDS surface:
+#   1. Direct EDS-by-cluster-name resolve (legacy path).
+#   2. Full LDS → RDS → CDS → EDS chain over one ADS session.
+#   3. A NACK path: a resource whose inner type_url is deliberately wrong.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ADS_PORT="${ADS_PORT:-18000}"
@@ -26,4 +29,10 @@ EOF
 export LEAN_GRPC_XDS_BOOTSTRAP="$BOOT"
 
 ./.lake/build/bin/interopClient 127.0.0.1 "$GRPC_PORT" xds_ads_unary
+./.lake/build/bin/interopClient 127.0.0.1 "$GRPC_PORT" xds_ads_chain_unary
+./.lake/build/bin/interopClient 127.0.0.1 "$GRPC_PORT" xds_ads_nack
+grep -q "NACK received" /tmp/lean-grpc-fake-ads.log || {
+  echo "expected FakeAds to log a NACK" >&2
+  exit 1
+}
 echo "run-xds-ads-smoke OK"

@@ -163,4 +163,16 @@ def callCredentials : Credentials.CallCredentials where
 def clearCache : IO Unit :=
   cacheRef.set none
 
+/-- Dial options for calling Google APIs with Application Default
+    Credentials: TLS channel credentials (verified against `caPath` when
+    given, e.g. a system root bundle; unverified otherwise since the
+    in-process OpenSSL bridge has no built-in trust store) composed with an
+    ADC-derived per-RPC Bearer token. Lives here rather than
+    `Grpc.Credentials` to avoid a Credentials → Adc → Credentials import
+    cycle. -/
+def dialOptions (caPath : Option System.FilePath := none) (serverName : Option String := none) :
+    Credentials.DialOptions :=
+  { channel := .tls { caPath, serverName }
+    call := some callCredentials }
+
 end Grpc.Adc

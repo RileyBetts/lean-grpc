@@ -115,12 +115,15 @@ static lean_obj_res io_error(const char *msg) {
 
 LEAN_EXPORT lean_obj_res lean_grpc_tls_dial(b_lean_obj_arg host_obj, uint16_t port,
                                            b_lean_obj_arg ca_obj, b_lean_obj_arg sni_obj,
+                                           b_lean_obj_arg cert_obj, b_lean_obj_arg key_obj,
                                            lean_obj_arg world) {
   (void)world;
   openssl_once();
   const char *host = lean_string_cstr(host_obj);
   const char *ca = lean_string_cstr(ca_obj);
   const char *sni = lean_string_cstr(sni_obj);
+  const char *cert = lean_string_cstr(cert_obj);
+  const char *key = lean_string_cstr(key_obj);
   int fd = tcp_connect(host, port);
   if (fd < 0) return io_error("tls dial: connect failed");
 
@@ -140,6 +143,15 @@ LEAN_EXPORT lean_obj_res lean_grpc_tls_dial(b_lean_obj_arg host_obj, uint16_t po
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
   } else {
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+  }
+  /* mTLS: present a client certificate/key when the caller supplies one. */
+  if (cert && cert[0] && key && key[0]) {
+    if (SSL_CTX_use_certificate_file(ctx, cert, SSL_FILETYPE_PEM) != 1 ||
+        SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) != 1) {
+      SSL_CTX_free(ctx);
+      close(fd);
+      return io_error("tls dial: load client cert/key failed");
+    }
   }
 
   SSL *ssl = SSL_new(ctx);
@@ -171,11 +183,13 @@ LEAN_EXPORT lean_obj_res lean_grpc_tls_dial(b_lean_obj_arg host_obj, uint16_t po
 }
 
 LEAN_EXPORT lean_obj_res lean_grpc_tls_listen(uint16_t port, b_lean_obj_arg cert_obj,
-                                             b_lean_obj_arg key_obj, lean_obj_arg world) {
+                                             b_lean_obj_arg key_obj, b_lean_obj_arg client_ca_obj,
+                                             lean_obj_arg world) {
   (void)world;
   openssl_once();
   const char *cert = lean_string_cstr(cert_obj);
   const char *key = lean_string_cstr(key_obj);
+  const char *client_ca = lean_string_cstr(client_ca_obj);
   SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
   if (!ctx) return io_error("tls listen: SSL_CTX_new failed");
   SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
@@ -184,6 +198,14 @@ LEAN_EXPORT lean_obj_res lean_grpc_tls_listen(uint16_t port, b_lean_obj_arg cert
       SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) != 1) {
     SSL_CTX_free(ctx);
     return io_error("tls listen: load cert/key failed");
+  }
+  /* mTLS: require and verify a client certificate signed by client_ca. */
+  if (client_ca && client_ca[0]) {
+    if (!SSL_CTX_load_verify_locations(ctx, client_ca, NULL)) {
+      SSL_CTX_free(ctx);
+      return io_error("tls listen: load client CA failed");
+    }
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
   }
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) {

@@ -2,6 +2,9 @@
 Copyright (c) 2026 RileyBetts. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
+import Proto.Wire
+import Bytes.Slice
+
 namespace Grpc.Codegen
 
 private def isSpace (c : Char) : Bool :=
@@ -185,5 +188,282 @@ def emitFromProto (text : String) : IO String := do
   if !pkg.isEmpty then
     out := out ++ "end\n"
   return out
+
+/-! # Real protoc-plugin path: `google.protobuf.compiler.CodeGeneratorRequest` decode.
+
+    Minimal subset of `google/protobuf/descriptor.proto` + `google/protobuf/compiler/plugin.proto`
+    — enough field/message/service/method metadata to emit real message structs and correctly
+    typed client/server/bidi signatures (rather than the `abbrev X := ByteArray` placeholders
+    used by the lightweight `.proto`-text path above, which has no field-level information). -/
+
+structure FieldDescriptor where
+  name : String := ""
+  number : Nat := 0
+  /-- Raw `FieldDescriptorProto.Type` enum value. -/
+  type : UInt32 := 0
+  typeName : String := ""
+  deriving Inhabited
+
+structure MessageDescriptor where
+  name : String := ""
+  fields : Array FieldDescriptor := #[]
+  deriving Inhabited
+
+structure MethodDescriptor where
+  name : String := ""
+  inputType : String := ""
+  outputType : String := ""
+  clientStreaming : Bool := false
+  serverStreaming : Bool := false
+  deriving Inhabited
+
+structure ServiceDescriptor where
+  name : String := ""
+  methods : Array MethodDescriptor := #[]
+  deriving Inhabited
+
+structure FileDescriptor where
+  name : String := ""
+  package : String := ""
+  messages : Array MessageDescriptor := #[]
+  services : Array ServiceDescriptor := #[]
+  deriving Inhabited
+
+structure CodeGeneratorRequest where
+  fileToGenerate : Array String := #[]
+  parameter : String := ""
+  /-- All files the compiler loaded (targets + transitive dependencies). -/
+  protoFiles : Array FileDescriptor := #[]
+  deriving Inhabited
+
+private def decodeFieldDescriptor (b : ByteArray) : FieldDescriptor :=
+  match Proto.Wire.decodeFields (Bytes.Slice.ofByteArray b) with
+  | .error _ => {}
+  | .ok fields =>
+    { name := (Proto.Wire.fieldString? fields 1).getD ""
+      number := ((Proto.Wire.fieldUInt32? fields 3).getD 0).toNat
+      type := (Proto.Wire.fieldUInt32? fields 5).getD 0
+      typeName := (Proto.Wire.fieldString? fields 6).getD "" }
+
+private def decodeMessageDescriptor (b : ByteArray) : MessageDescriptor :=
+  match Proto.Wire.decodeFields (Bytes.Slice.ofByteArray b) with
+  | .error _ => {}
+  | .ok fields =>
+    { name := (Proto.Wire.fieldString? fields 1).getD ""
+      fields := (Proto.Wire.fieldBytesMany fields 2).map decodeFieldDescriptor }
+
+private def decodeMethodDescriptor (b : ByteArray) : MethodDescriptor :=
+  match Proto.Wire.decodeFields (Bytes.Slice.ofByteArray b) with
+  | .error _ => {}
+  | .ok fields =>
+    { name := (Proto.Wire.fieldString? fields 1).getD ""
+      inputType := (Proto.Wire.fieldString? fields 2).getD ""
+      outputType := (Proto.Wire.fieldString? fields 3).getD ""
+      clientStreaming := ((Proto.Wire.fieldUInt32? fields 5).getD 0) != 0
+      serverStreaming := ((Proto.Wire.fieldUInt32? fields 6).getD 0) != 0 }
+
+private def decodeServiceDescriptor (b : ByteArray) : ServiceDescriptor :=
+  match Proto.Wire.decodeFields (Bytes.Slice.ofByteArray b) with
+  | .error _ => {}
+  | .ok fields =>
+    { name := (Proto.Wire.fieldString? fields 1).getD ""
+      methods := (Proto.Wire.fieldBytesMany fields 2).map decodeMethodDescriptor }
+
+def decodeFileDescriptor (b : ByteArray) : FileDescriptor :=
+  match Proto.Wire.decodeFields (Bytes.Slice.ofByteArray b) with
+  | .error _ => {}
+  | .ok fields =>
+    { name := (Proto.Wire.fieldString? fields 1).getD ""
+      package := (Proto.Wire.fieldString? fields 2).getD ""
+      messages := (Proto.Wire.fieldBytesMany fields 4).map decodeMessageDescriptor
+      services := (Proto.Wire.fieldBytesMany fields 6).map decodeServiceDescriptor }
+
+def CodeGeneratorRequest.decode (b : ByteArray) : Except String CodeGeneratorRequest := do
+  let fields ← Proto.Wire.decodeFields (Bytes.Slice.ofByteArray b)
+  let fileToGenerate := Id.run do
+    let mut names : Array String := #[]
+    for payload in Proto.Wire.fieldBytesMany fields 1 do
+      match String.fromUTF8? payload with
+      | some s => names := names.push s
+      | none => pure ()
+    return names
+  return {
+    fileToGenerate
+    parameter := (Proto.Wire.fieldString? fields 2).getD ""
+    protoFiles := (Proto.Wire.fieldBytesMany fields 15).map decodeFileDescriptor
+  }
+
+/-- Strip a fully-qualified `.pkg.sub.Message` type name down to its local `Message` name. -/
+private def localMessageName (qualified : String) : String :=
+  let parts := (qualified.splitOn ".").filter (· != "")
+  parts.getLastD qualified
+
+/-- Map a subset of `FieldDescriptorProto.Type` to a wire-codec "kind" we know how to emit.
+    Types without a dedicated `Proto.Wire` codec (nested messages, 64-bit ints, fixed32,
+    float) fall back to `bytes` (the raw wire payload) so generation always produces
+    compilable code — full submessage support is out of scope for this minimal subset. -/
+private def fieldKind (f : FieldDescriptor) : String :=
+  match f.type with
+  | 9 => "string"    -- TYPE_STRING
+  | 12 => "bytes"    -- TYPE_BYTES
+  | 8 => "bool"      -- TYPE_BOOL
+  | 1 => "double"    -- TYPE_DOUBLE
+  | 5 | 13 | 14 | 17 => "uint32" -- TYPE_INT32/UINT32/ENUM/SINT32 (all varint-encoded)
+  | _ => "bytes"
+
+private def leanTypeOf : String → String
+  | "string" => "String" | "bytes" => "ByteArray" | "bool" => "Bool"
+  | "double" => "Float" | "uint32" => "UInt32" | _ => "ByteArray"
+
+private def defaultLitOf : String → String
+  | "string" => "\"\"" | "bytes" => "ByteArray.empty" | "bool" => "false"
+  | "double" => "0.0" | "uint32" => "0" | _ => "ByteArray.empty"
+
+private def encodeLineOf (f : FieldDescriptor) : String :=
+  match fieldKind f with
+  | "string" => s!"    if !m.{f.name}.isEmpty then acc := Proto.Wire.encodeString acc {f.number} m.{f.name}"
+  | "bool" => s!"    if m.{f.name} then acc := Proto.Wire.encodeBool acc {f.number} m.{f.name}"
+  | "double" => s!"    if m.{f.name} != 0.0 then acc := Proto.Wire.encodeDouble acc {f.number} m.{f.name}"
+  | "uint32" => s!"    if m.{f.name} != 0 then acc := Proto.Wire.encodeUInt32 acc {f.number} m.{f.name}"
+  | _ => s!"    if !m.{f.name}.isEmpty then acc := Proto.Wire.encodeBytes acc {f.number} m.{f.name}"
+
+private def decodeExprOf (f : FieldDescriptor) : String :=
+  match fieldKind f with
+  | "string" => s!"(Proto.Wire.fieldString? fields {f.number}).getD \"\""
+  | "bool" => s!"((Proto.Wire.fieldUInt32? fields {f.number}).getD 0) != 0"
+  | "double" => s!"(Proto.Wire.fieldDouble? fields {f.number}).getD 0.0"
+  | "uint32" => s!"(Proto.Wire.fieldUInt32? fields {f.number}).getD 0"
+  | _ => s!"(Proto.Wire.fieldBytes? fields {f.number}).getD ByteArray.empty"
+
+/-- Emit a message struct + `encode`/`decode` for one `MessageDescriptor`. -/
+def emitMessage (m : MessageDescriptor) : String :=
+  Id.run do
+    let mut out := s!"structure {m.name} where\n"
+    for f in m.fields do
+      out := out ++ s!"  {f.name} : {leanTypeOf (fieldKind f)} := {defaultLitOf (fieldKind f)}\n"
+    out := out ++ "  deriving Inhabited\n\n"
+    out := out ++ s!"def {m.name}.encode (m : {m.name}) : ByteArray :=\n"
+    out := out ++ "  Id.run do\n    let mut acc := ByteArray.empty\n"
+    for f in m.fields do
+      out := out ++ encodeLineOf f ++ "\n"
+    out := out ++ "    return acc\n\n"
+    out := out ++ s!"def {m.name}.decode (b : ByteArray) : Except String {m.name} := do\n"
+    out := out ++ "  let fields ← Proto.Wire.decodeFields (Bytes.Slice.ofByteArray b)\n"
+    out := out ++ "  return {\n"
+    for f in m.fields do
+      out := out ++ s!"    {f.name} := {decodeExprOf f}\n"
+    out := out ++ "  }\n\n"
+    return out
+
+/-- Emit a client stub (typed unary/server-streaming/client-streaming/bidi methods) plus a
+    typed unary server-registration helper, using real message struct names resolved from
+    `input_type`/`output_type`. -/
+def emitServiceTyped (pkg : String) (svc : ServiceDescriptor) : String :=
+  Id.run do
+    let full := if pkg.isEmpty then svc.name else pkg ++ "." ++ svc.name
+    let mut out := s!"/-- Service `{svc.name}` client stub (typed). -/\n"
+    out := out ++ s!"structure {svc.name}Stub where\n  channel : Grpc.Channel\n\n"
+    out := out ++ s!"namespace {svc.name}Stub\n\n"
+    for m in svc.methods do
+      let reqTy := localMessageName m.inputType
+      let respTy := localMessageName m.outputType
+      if !m.clientStreaming && !m.serverStreaming then
+        out := out ++ s!"/-- Unary `{m.name}`: `{reqTy}` → `{respTy}`. -/\n"
+        out := out ++ s!"def {m.name} (self : {svc.name}Stub) (req : {reqTy}) : IO (Except String {respTy}) := do\n"
+        out := out ++ s!"  let res ← Grpc.Channel.unary self.channel \"{full}\" \"{m.name}\" ({reqTy}.encode req)\n"
+        out := out ++ "  if res.status.code != .ok then return .error res.status.message\n"
+        out := out ++ s!"  {respTy}.decode res.message\n\n"
+      else if !m.clientStreaming && m.serverStreaming then
+        out := out ++ s!"/-- Server-streaming `{m.name}`: `{reqTy}` → many `{respTy}`. -/\n"
+        out := out ++ s!"def {m.name} (self : {svc.name}Stub) (req : {reqTy}) : IO (Array {respTy}) := do\n"
+        out := out ++ s!"  let stream ← Grpc.Channel.openStream self.channel \"{full}\" \"{m.name}\"\n"
+        out := out ++ s!"  Grpc.Stream.StreamWriter.send stream.writer ({reqTy}.encode req)\n"
+        out := out ++ "  Grpc.Stream.StreamWriter.halfClose stream.writer\n"
+        out := out ++ s!"  let mut acc : Array {respTy} := #[]\n"
+        out := out ++ "  while true do\n"
+        out := out ++ "    match ← Grpc.Stream.StreamReader.recv? stream.reader with\n"
+        out := out ++ "    | none => break\n"
+        out := out ++ s!"    | some raw =>\n"
+        out := out ++ s!"      match {respTy}.decode raw with\n"
+        out := out ++ "      | .ok r => acc := acc.push r\n"
+        out := out ++ "      | .error _ => pure ()\n"
+        out := out ++ "  return acc\n\n"
+      else if m.clientStreaming && !m.serverStreaming then
+        out := out ++ s!"/-- Client-streaming `{m.name}`: many `{reqTy}` → `{respTy}`. -/\n"
+        out := out ++ s!"def {m.name} (self : {svc.name}Stub) (reqs : Array {reqTy}) : IO (Except String {respTy}) := do\n"
+        out := out ++ s!"  let stream ← Grpc.Channel.openStream self.channel \"{full}\" \"{m.name}\"\n"
+        out := out ++ "  for req in reqs do\n"
+        out := out ++ s!"    Grpc.Stream.StreamWriter.send stream.writer ({reqTy}.encode req)\n"
+        out := out ++ "  Grpc.Stream.StreamWriter.halfClose stream.writer\n"
+        out := out ++ "  match ← Grpc.Stream.StreamReader.recv? stream.reader with\n"
+        out := out ++ "  | none => return .error \"empty response\"\n"
+        out := out ++ s!"  | some raw => match {respTy}.decode raw with\n"
+        out := out ++ "    | .ok r => return .ok r\n"
+        out := out ++ "    | .error e => return .error e\n\n"
+      else
+        out := out ++ s!"/-- Bidi-streaming `{m.name}`: many `{reqTy}` → many `{respTy}`. -/\n"
+        out := out ++ s!"def {m.name} (self : {svc.name}Stub) (reqs : Array {reqTy}) : IO (Array {respTy}) := do\n"
+        out := out ++ s!"  let stream ← Grpc.Channel.openStream self.channel \"{full}\" \"{m.name}\"\n"
+        out := out ++ "  for req in reqs do\n"
+        out := out ++ s!"    Grpc.Stream.StreamWriter.send stream.writer ({reqTy}.encode req)\n"
+        out := out ++ "  Grpc.Stream.StreamWriter.halfClose stream.writer\n"
+        out := out ++ s!"  let mut acc : Array {respTy} := #[]\n"
+        out := out ++ "  while true do\n"
+        out := out ++ "    match ← Grpc.Stream.StreamReader.recv? stream.reader with\n"
+        out := out ++ "    | none => break\n"
+        out := out ++ s!"    | some raw =>\n"
+        out := out ++ s!"      match {respTy}.decode raw with\n"
+        out := out ++ "      | .ok r => acc := acc.push r\n"
+        out := out ++ "      | .error _ => pure ()\n"
+        out := out ++ "  return acc\n\n"
+    out := out ++ s!"end {svc.name}Stub\n\n"
+    -- Typed unary server registration (streaming handlers already compose directly with
+    -- `Grpc.Server.registerServerStream/registerClientStream/registerBidi` + the message
+    -- `.encode`/`.decode` emitted above, so no extra wrapper is generated for those).
+    for m in svc.methods do
+      if !m.clientStreaming && !m.serverStreaming then
+        let reqTy := localMessageName m.inputType
+        let respTy := localMessageName m.outputType
+        out := out ++ s!"/-- Register a typed unary handler for `{svc.name}/{m.name}`. -/\n"
+        out := out ++ s!"def register{svc.name}{m.name} (s : Grpc.Server)\n"
+        out := out ++ s!"    (h : {reqTy} → IO ({respTy} × Grpc.Status)) : Grpc.Server :=\n"
+        out := out ++ s!"  Grpc.Server.register s \"{full}\" \"{m.name}\" fun reqBytes => do\n"
+        out := out ++ s!"    match {reqTy}.decode reqBytes with\n"
+        out := out ++ "    | .error e => return (ByteArray.empty, Grpc.Status.invalidArgument e)\n"
+        out := out ++ "    | .ok req =>\n"
+        out := out ++ "      let (resp, st) ← h req\n"
+        out := out ++ s!"      return ({respTy}.encode resp, st)\n\n"
+    return out
+
+/-- Emit one `.lean` file's worth of message structs + typed client/server code for a single
+    `FileDescriptor` (as decoded from a real `CodeGeneratorRequest`). -/
+def emitFromDescriptor (fd : FileDescriptor) : String :=
+  Id.run do
+    let ns := String.ofList (fd.package.toList.map (fun c => if c == '.' then '_' else c))
+    let mut out := "/-\n  Generated by protoc-gen-lean4-grpc (descriptor path) — do not edit.\n-/\n"
+    out := out ++ "import Grpc\nimport Proto\n\n"
+    if !fd.package.isEmpty then out := out ++ s!"namespace {ns}\n\n"
+    for m in fd.messages do
+      out := out ++ emitMessage m
+    for svc in fd.services do
+      out := out ++ emitServiceTyped fd.package svc
+    if !fd.package.isEmpty then out := out ++ "end\n"
+    return out
+
+/-- Emit every requested `file_to_generate` from a decoded `CodeGeneratorRequest`, concatenated
+    (one plugin invocation can be asked to generate several files at once). -/
+def emitFromRequest (req : CodeGeneratorRequest) : String :=
+  Id.run do
+    let mut out := ""
+    for name in req.fileToGenerate do
+      match req.protoFiles.find? (fun f => f.name == name) with
+      | some fd => out := out ++ emitFromDescriptor fd
+      | none => pure ()
+    return out
+
+/-- Encode a `CodeGeneratorResponse` with only the `error` field set (field 1, string) — protoc
+    surfaces this string to the user and treats the invocation as a generation failure. -/
+def encodeErrorResponse (msg : String) : ByteArray :=
+  Proto.Wire.encodeString ByteArray.empty 1 msg
 
 end Grpc.Codegen

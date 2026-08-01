@@ -27,9 +27,33 @@ structure Response where
   headers : Array Hpack.HeaderField
   trailers : Array Hpack.HeaderField
   data : ByteArray
+  /-- Peer RST_STREAM error code, if the stream was reset before a normal end. -/
+  rstErrorCode : Option UInt32 := none
   deriving Inhabited
 
 namespace Client
+
+/-- Map HTTP/2 RST_STREAM error codes to synthesized gRPC trailers (PROTOCOL-HTTP2). -/
+def rstToTrailers (code : UInt32) : Array Hpack.HeaderField :=
+  let (grpc, msg) : String × String :=
+    match code.toNat with
+    | 0 => ("13", "NO_ERROR")           -- INTERNAL
+    | 1 => ("13", "PROTOCOL_ERROR")
+    | 2 => ("13", "INTERNAL_ERROR")
+    | 3 => ("13", "FLOW_CONTROL_ERROR")
+    | 4 => ("13", "SETTINGS_TIMEOUT")
+    | 6 => ("13", "FRAME_SIZE_ERROR")
+    | 7 => ("14", "REFUSED_STREAM")     -- UNAVAILABLE
+    | 8 => ("1", "CANCEL")              -- CANCELLED
+    | 9 => ("13", "COMPRESSION_ERROR")
+    | 10 => ("13", "CONNECT_ERROR")
+    | 11 => ("8", "ENHANCE_YOUR_CALM")  -- RESOURCE_EXHAUSTED
+    | 12 => ("7", "INADEQUATE_SECURITY") -- PERMISSION_DENIED
+    | _ => ("13", s!"RST_STREAM {code}")
+  #[
+    ⟨"grpc-status".toUTF8, grpc.toUTF8⟩,
+    ⟨"grpc-message".toUTF8, msg.toUTF8⟩
+  ]
 
 /-- Finish HTTP/2 client preface + settings exchange on an already-connected transport. -/
 def connectTransport (t : ByteTransport) : IO ClientConn := do
@@ -113,6 +137,13 @@ partial def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 20
       throw (IO.userError "DEADLINE_EXCEEDED")
   let st ← c.state.get
   if let some s := st.getStream streamId then
+    if let some code := s.rstErrorCode then
+      return {
+        headers := s.requestHeaders
+        trailers := rstToTrailers code
+        data := s.dataBuf
+        rstErrorCode := some code
+      }
     if s.endStreamRemote && s.endHeaders then
       let trailersReady := s.endTrailers || s.trailersBuf.isEmpty
       if trailersReady then
@@ -136,14 +167,27 @@ partial def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 20
       st := st'
       sendFrames c.transport outs
     c.state.set st
+    -- Re-check RST after processing frames (may have just closed the stream).
+    if let some s := st.getStream streamId then
+      if let some code := s.rstErrorCode then
+        return {
+          headers := s.requestHeaders
+          trailers := rstToTrailers code
+          data := s.dataBuf
+          rstErrorCode := some code
+        }
     awaitResponse c streamId (fuel - 1) deadlineMs? t0
 
-def unary (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray)
-    (deadlineMs? : Option Nat := none) : IO Response := do
-  let sid ← startRequest c headers body true
+/-- Await a previously-started unary request's response (headers/data/trailers),
+    converting a wall-clock deadline timeout into synthesized DEADLINE_EXCEEDED
+    trailers. Split out from `unary` so callers that need the stream id early
+    (e.g. parallel hedging, which must be able to `resetStream` a losing
+    attempt while it is still in flight) can call `startRequest` themselves. -/
+def awaitUnary (c : ClientConn) (streamId : UInt32) (deadlineMs? : Option Nat := none) :
+    IO Response := do
   let t0 ← IO.monoMsNow
   try
-    awaitResponse c sid 200 deadlineMs? t0
+    awaitResponse c streamId 200 deadlineMs? t0
   catch e =>
     if (toString e).contains "DEADLINE_EXCEEDED" then
       return {
@@ -156,9 +200,22 @@ def unary (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray
       }
     else throw e
 
-/-- Send RST_STREAM to cancel a stream. -/
+def unary (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray)
+    (deadlineMs? : Option Nat := none) : IO Response := do
+  let sid ← startRequest c headers body true
+  awaitUnary c sid deadlineMs?
+
+/-- Send RST_STREAM to cancel a stream.
+    Also marks the stream closed locally with the same error code, so a
+    client-initiated cancel (e.g. interop `cancel_after_begin`) is reflected
+    immediately by `awaitResponse` (via `rstToTrailers`) without depending on
+    anything coming back from the peer. -/
 def resetStream (c : ClientConn) (streamId : UInt32) (errorCode : UInt32 := 0x8) : IO Unit := do
   sendFrames c.transport #[Frame.rstStream streamId errorCode]
+  let st ← c.state.get
+  match st.getStream streamId with
+  | some s => c.state.set (st.upsertStream { s with state := .closed, rstErrorCode := some errorCode })
+  | none => pure ()
 
 end Client
 end H2

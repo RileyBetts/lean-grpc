@@ -9,6 +9,7 @@ CASES=(
   cancel_after_first_response special_status_message unimplemented_method unimplemented_service
   timeout_on_sleeping_server pick_first_unary
   server_compressed_unary server_compressed_streaming
+  cacheable_unary
 )
 GOBIN="${GOBIN:-$(go env GOPATH)/bin}"
 
