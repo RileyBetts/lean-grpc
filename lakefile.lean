@@ -7,7 +7,7 @@ open Lake DSL
 open System
 
 package «lean-grpc» where
-  version := v!"0.5.0"
+  version := v!"1.0.0"
   keywords := #["grpc", "http2", "hpack", "protobuf", "networking"]
   description := "Pure Lean 4 gRPC stack (HTTP/2 + HPACK + gRPC) on Std.Async"
   -- OpenSSL link flags live on `Grpc` only (not Bytes/Hpack/H2), so non-gRPC
@@ -41,6 +41,9 @@ lean_lib Proto
 lean_lib Grpc where
   moreLinkObjs := #[tls_ffi.o]
   moreLinkArgs := #["-lssl", "-lcrypto"]
+
+/-- Compile-time theorems for high-leverage pure codecs / maps (no runtime exe). -/
+lean_lib Proofs
 
 @[default_target]
 lean_lib LeanGrpc

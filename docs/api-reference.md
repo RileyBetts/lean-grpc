@@ -1,8 +1,10 @@
 # API reference
 
-Lean module catalogue for consumers. Signatures are summarized; see source under `Grpc/`, `H2/`, `Proto/` for full definitions. Version string: `Grpc.version` (currently `0.5.0`).
+Lean module catalogue for consumers. Signatures are summarized; see source under `Grpc/`, `H2/`, `Proto/` for full definitions. Version string: `Grpc.version` (currently `1.0.0`).
 
 Import umbrella: `import Grpc` (pulls status, channel, server, credentials, TLS, xDS, ops, etc.). Add `import Proto` for bundled message codecs.
+
+The Lake lib `Proofs` is **not** part of the consumer API (CI-only compile-time theorems); see [proofs.md](proofs.md).
 
 ---
 

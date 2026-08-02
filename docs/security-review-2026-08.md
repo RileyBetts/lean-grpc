@@ -3,7 +3,7 @@
 **Scope:** Full stack — Lean wire parsers, native OpenSSL/zlib FFI, ADC/JWT credentials, xDS/SDS, ops surfaces, codegen, CI/supply-chain, Python/Go interop helpers.  
 **Method:** Threat-model-driven static audit + targeted dynamic PoCs (compression bomb under ASAN; code-path verification).  
 **Baseline:** package tip matching this review date; docs [SECURITY.md](../SECURITY.md), [conformance.md](conformance.md), [tls-envoy.md](tls-envoy.md), [packaging.md](packaging.md).  
-**Out of scope:** ALTS / GCE channel credentials / HTTP CONNECT (allowlisted); live Google ADC without credentials; formal Lean verification; in-tree code fixes (tracked as remediation backlog below).
+**Out of scope:** ALTS / GCE channel credentials / HTTP CONNECT (allowlisted); live Google ADC without credentials; end-to-end formal verification of TLS/FFI/async sessions (pure codec theorems live under `Proofs/` — see [proofs.md](proofs.md)); in-tree code fixes (tracked as remediation backlog below).
 
 ---
 

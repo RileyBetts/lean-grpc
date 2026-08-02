@@ -38,5 +38,5 @@ import Grpc.Grpclb
 import Grpc.Interceptor
 
 namespace Grpc
-def version : String := "0.5.0"
+def version : String := "1.0.0"
 end Grpc

@@ -27,13 +27,9 @@ def release (p : Pool) (b : ByteArray) : Pool :=
   else if p.free.size ≥ 32 then p  -- cap pool size
   else ⟨p.free.push b⟩
 
-/-- Grow a buffer by pushing bytes (may allocate). -/
+/-- Grow a buffer by appending bytes (may allocate). -/
 def pushBytes (acc : ByteArray) (bs : ByteArray) : ByteArray :=
-  Id.run do
-    let mut out := acc
-    for i in [:bs.size] do
-      out := out.push (bs.get! i)
-    return out
+  acc ++ bs
 
 end Pool
 end Bytes

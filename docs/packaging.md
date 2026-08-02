@@ -67,7 +67,7 @@ lake build
 
 ```lean
 require «lean-grpc» from git
-  "https://github.com/RileyBetts/lean-grpc.git" @ "v0.5.0"
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.0.0"
 ```
 
 Then `import Grpc` (and `Proto` if using bundled codecs).
@@ -78,7 +78,7 @@ Then `import Grpc` (and `Proto` if using bundled codecs).
 require «lean-grpc»   -- once listed on reservoir.lean-lang.org
 ```
 
-Package version in-tree is **0.5.0** (`lakefile.lean`, `Grpc.version`). Creating the git tag on origin is a separate maintainer step (below).
+Package version in-tree is **1.0.0** (`lakefile.lean`, `Grpc.version`). Creating the git tag on origin is a separate maintainer step (below).
 
 ## Maintainer release checklist
 
@@ -92,8 +92,8 @@ Documented only — do **not** automate tagging from CI or agent runs.
 6. **Manual version tagging (maintainer only):** on `main`, when you choose to publish:
 
    ```bash
-   git tag -a v0.5.0 -m "lean-grpc 0.5.0"
-   git push origin v0.5.0
+   git tag -a v1.0.0 -m "lean-grpc 1.0.0"
+   git push origin v1.0.0
    ```
 
    Agents and CI must not create or push tags.

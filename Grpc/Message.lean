@@ -16,12 +16,10 @@ def defaultMaxMsgSize : Nat := 4 * 1024 * 1024
 /-- Length-prefixed gRPC message: Compressed-Flag (1) + Length (4 BE) + Message. -/
 def encode (payload : ByteArray) (alg : Compression.Algorithm := .identity) : Except String ByteArray := do
   let body ← Compression.compress alg payload
-  let compressed := alg != .identity
-  let mut out := ByteArray.empty
-  out := out.push (if compressed then 1 else 0)
-  out := Bytes.Pool.pushBytes out (Bytes.BE.u32Bytes body.size.toUInt32)
-  out := Bytes.Pool.pushBytes out body
-  return out
+  let flag : UInt8 := if alg != .identity then 1 else 0
+  return ByteArray.empty.push flag
+    |> (Bytes.Pool.pushBytes · (Bytes.BE.u32Bytes body.size.toUInt32))
+    |> (Bytes.Pool.pushBytes · body)
 
 /-- Encode with peer-compatible gzip when requested. -/
 def encodeIO (payload : ByteArray) (alg : Compression.Algorithm := .identity) : IO ByteArray := do

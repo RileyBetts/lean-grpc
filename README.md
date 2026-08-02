@@ -2,7 +2,7 @@
 
 General-purpose **Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
 
-Standalone Lake package (**0.5.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
+Standalone Lake package (**1.0.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
 
 **Public libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`). Tests, examples, and the compile-time `Proofs` library are not consumer API.
 
@@ -14,7 +14,7 @@ In your `lakefile.lean`:
 
 ```lean
 require «lean-grpc» from git
-  "https://github.com/RileyBetts/lean-grpc.git" @ "v0.5.0"
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.0.0"
 ```
 
 Then `import Grpc`. After Reservoir lists the package you can use `require «lean-grpc»` without a git URL. Packaging details and the maintainer release checklist: [docs/packaging.md](docs/packaging.md).

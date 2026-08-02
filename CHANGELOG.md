@@ -1,11 +1,19 @@
 # Changelog
 
-All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **0.5.0**). Git tags such as `v0.5.0` are created manually by maintainers when publishing.
+All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **1.0.0**). Git tags such as `v1.0.0` are created manually by maintainers when publishing.
 
-## [Unreleased]
+## [1.0.0] — 2026-08-02
 
-- Provenance / IP diligence note ([docs/provenance.md](docs/provenance.md)): independent PROTOCOL-HTTP2 implementation; `NOTICE` attributes Apache-2.0 gRPC-authors interop protos under `python_interop/proto/` and `rust_interop/proto/`.
+First production-oriented release of the independent Lean 4 gRPC stack.
+
 - Compile-time **`Proofs`** Lake library for high-leverage pure codecs (status maps, BE ints, gRPC identity framing, protobuf varints, HTTP/2 frame types, HPACK integers/headers, metadata percent/base64/timeout). Run `lake build Proofs`; documented in [docs/proofs.md](docs/proofs.md). Hard-gated in CI.
+- Provenance / IP diligence note ([docs/provenance.md](docs/provenance.md)): independent PROTOCOL-HTTP2 implementation; `NOTICE` attributes Apache-2.0 gRPC-authors interop protos under `python_interop/proto/` and `rust_interop/proto/`.
+- Near grpc-go / official interop parity for general-purpose use (Go/Python/Rust peers, h2spec, stress demos) — see [docs/conformance.md](docs/conformance.md)
+
+### Known allowlists
+
+- ALTS / GCE channel credentials (`Grpc.Gcp`)
+- Live Google ADC remains mock/allowlisted in regular CI
 
 ## [0.5.0] — 2026-08-01
 
