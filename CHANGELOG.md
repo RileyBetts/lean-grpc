@@ -4,9 +4,9 @@ All notable changes to lean-grpc are documented here. The package version is the
 
 ## [1.0.0] — 2026-08-02
 
-First production-oriented release of the independent Lean 4 gRPC stack.
+First production-oriented packaging release of the independent Lean 4 gRPC stack. **Scope note:** selected pure-codec proofs ship in CI; `H2.ConnState`, Huffman trie rewrite, and broader ∀ roundtrips remain follow-ups — see [ROADMAP.md](ROADMAP.md) and [docs/proofs.md](docs/proofs.md).
 
-- Compile-time **`Proofs`** Lake library for high-leverage pure codecs (status maps, BE ints, gRPC identity framing, protobuf varints, HTTP/2 frame types, HPACK integers/headers, metadata percent/base64/timeout). Run `lake build Proofs`; documented in [docs/proofs.md](docs/proofs.md). Hard-gated in CI.
+- Compile-time **`Proofs`** Lake library for high-leverage pure codecs (status maps, BE ints, gRPC identity framing lemmas, protobuf varint fixtures, HTTP/2 frame-type maps + fixtures, HPACK integer/header fixtures, metadata percent/base64/timeout). Run `lake build Proofs`; documented in [docs/proofs.md](docs/proofs.md). Hard-gated in CI.
 - Provenance / IP diligence note ([docs/provenance.md](docs/provenance.md)): independent PROTOCOL-HTTP2 implementation; `NOTICE` attributes Apache-2.0 gRPC-authors interop protos under `python_interop/proto/` and `rust_interop/proto/`.
 - Near grpc-go / official interop parity for general-purpose use (Go/Python/Rust peers, h2spec, stress demos) — see [docs/conformance.md](docs/conformance.md)
 

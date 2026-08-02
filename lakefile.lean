@@ -10,6 +10,10 @@ package «lean-grpc» where
   version := v!"1.0.0"
   keywords := #["grpc", "http2", "hpack", "protobuf", "networking"]
   description := "Pure Lean 4 gRPC stack (HTTP/2 + HPACK + gRPC) on Std.Async"
+  homepage := "https://rileybetts.ai/oss/lean-grpc"
+  license := "Apache-2.0"
+  licenseFiles := #["LICENSE", "NOTICE"]
+  readmeFile := "README.md"
   -- OpenSSL link flags live on `Grpc` only (not Bytes/Hpack/H2), so non-gRPC
   -- targets need not pull `-lssl`. Peer gzip uses process helpers / stored
   -- deflate — `zlib_bridge.o` is unused by Lean FFI and is not linked here.
