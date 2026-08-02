@@ -97,4 +97,4 @@ lake build helloworldServer helloworldClient benchSoak
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE) (full terms) and [NOTICE](NOTICE) (copyright).
