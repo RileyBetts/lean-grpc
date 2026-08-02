@@ -31,8 +31,10 @@ If private contact fails, open a GitHub Security Advisory on the repository (if 
 | Reflection / channelz / binary log | Expose internals / may capture metadata — demos gate reflection/channelz behind `LEAN_GRPC_DEMO_OPS=1`; BinaryLog redacts `authorization` |
 | Codegen plugin | Hostile `.proto` / plugin stdin names are allowlisted (`[A-Za-z_][A-Za-z0-9_]*`) |
 | Native FFI | Report memory bugs with ASAN notes; CI runs `scripts/security-asan.sh` |
+| Pure codecs | Compile-time theorems in `Proofs/` (`lake build Proofs`); see [docs/proofs.md](docs/proofs.md) — complements runtime tests; does not prove TLS/FFI |
 
-Full audit + remediation status: [docs/security-review-2026-08.md](docs/security-review-2026-08.md).
+Full audit + remediation status: [docs/security-review-2026-08.md](docs/security-review-2026-08.md).  
+Provenance / third-party interop protos: [docs/provenance.md](docs/provenance.md), [NOTICE](NOTICE).
 
 ## Out of scope / known limitations
 

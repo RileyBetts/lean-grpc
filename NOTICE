@@ -6,3 +6,20 @@ This product includes software developed for lean-grpc
 
 Licensed under the Apache License, Version 2.0.
 See the LICENSE file for the full license text.
+
+---------------------------------------------------------------------------
+Third-party components (Apache License 2.0)
+
+This repository vendors protocol buffer definitions from the official gRPC
+interop / testing suite for peer conformance fixtures only:
+
+  - python_interop/proto/*.proto
+  - rust_interop/proto/*.proto
+
+Copyright 2015-2016 gRPC authors.
+
+Those files are distributed under the Apache License, Version 2.0.
+Their original copyright and license headers are retained in-file.
+They are not part of the lean-grpc public Lean library API.
+
+See docs/provenance.md for provenance and independent-implementation notes.

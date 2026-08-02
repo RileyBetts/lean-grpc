@@ -10,6 +10,7 @@ lean-grpc is a single Lake package. Do not split libraries into separate repos f
 |---|---|---|
 | `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` | Library stack | Yes |
 | `LeanGrpc.lean` | Umbrella import | Yes |
+| `Proofs` | Compile-time theorems (CI only; not consumer API) | No |
 | `native/` + OpenSSL/zlib link args | TLS / gzip FFI | Required for full features |
 | `Tests/`, `Bench/`, `Examples/`, `scripts/`, `python_interop/` | Dev / CI / demos | No |
 | `lakefile.lean`, `lake-manifest.json`, `lean-toolchain` | Lake package root | Required for Reservoir |
@@ -39,9 +40,11 @@ lean-grpc/
 
 While the repository is private, GitHub may report license as `NOASSERTION`. After making the repo public, confirm the license badge shows Apache-2.0; adjust `LICENSE` only if detection still fails.
 
+**Provenance:** lean-grpc is an independent implementation of the published gRPC-over-HTTP/2 protocol (not a fork of official runtimes). Peer fixtures under `python_interop/proto/` and `rust_interop/proto/` retain Apache-2.0 gRPC-authors headers; see [NOTICE](../NOTICE) and [provenance.md](provenance.md).
+
 ## Consumer contract
 
-**Public libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`). Tests and examples are not API.
+**Public libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`). Tests, examples, and `Proofs` are not consumer API.
 
 **System dependencies:**
 

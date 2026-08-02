@@ -2,6 +2,11 @@
 
 All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **0.5.0**). Git tags such as `v0.5.0` are created manually by maintainers when publishing.
 
+## [Unreleased]
+
+- Provenance / IP diligence note ([docs/provenance.md](docs/provenance.md)): independent PROTOCOL-HTTP2 implementation; `NOTICE` attributes Apache-2.0 gRPC-authors interop protos under `python_interop/proto/` and `rust_interop/proto/`.
+- Compile-time **`Proofs`** Lake library for high-leverage pure codecs (status maps, BE ints, gRPC identity framing, protobuf varints, HTTP/2 frame types, HPACK integers/headers, metadata percent/base64/timeout). Run `lake build Proofs`; documented in [docs/proofs.md](docs/proofs.md). Hard-gated in CI.
+
 ## [0.5.0] — 2026-08-01
 
 Initial public packaging baseline for Lake / Reservoir distribution.

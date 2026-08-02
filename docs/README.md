@@ -9,10 +9,12 @@ User and contributor docs for the Lean 4 gRPC stack.
 | [Cookbook: streaming](cookbook-streaming.md) | `serverStream` / `clientStream` / `bidiStream` / `openStream` |
 | [Cookbook: interceptors / auth / mTLS](cookbook-interceptors.md) | Logging chain, bearer tokens, TLS |
 | [Packaging](packaging.md) | Lake/Reservoir distribution, consumer contract, maintainer release checklist |
+| [Provenance / IP diligence](provenance.md) | Independent protocol implementation note; third-party interop protos |
 | [Architecture](architecture.md) | Layering, data flow, process model |
 | [API reference](api-reference.md) | Primary `Grpc` / `H2` / `Proto` surfaces |
 | [Protocol mapping](protocol-mapping.md) | How lean-grpc maps onto gRPC-over-HTTP/2 |
 | [Conformance](conformance.md) | Scorecard, compliance estimates, interop matrix, allowlists |
+| [Formal proofs](proofs.md) | Compile-time `Proofs` library for pure codecs / maps |
 | [TLS / Envoy](tls-envoy.md) | In-process OpenSSL and optional sidecars |
 | [CHANGELOG](../CHANGELOG.md) | Package version history |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Dev setup, tests, PR expectations |
