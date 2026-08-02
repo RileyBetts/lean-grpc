@@ -6,21 +6,21 @@
 
 General-purpose **Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
 
-Standalone Lake package (**0.5.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
+Standalone Lake package (**1.0.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
 
 **Docs:** [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc) (curated) · [docs/](docs/README.md) (full in-repo index)
 
-**Public libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`). Tests and examples are not API.
+**Public libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`). Tests, examples, and the compile-time `Proofs` library are not consumer API.
 
 ## Install / depend
 
-**System deps:** OpenSSL + zlib (Debian/Ubuntu: `libssl-dev pkg-config zlib1g-dev`; macOS Homebrew: `openssl` / `openssl@3` + `pkg-config`). If headers are missing: `./scripts/fetch-openssl-headers.sh`. On macOS, set `LIBRARY_PATH` so the linker finds SDK `libz` and Homebrew OpenSSL (see [docs/packaging.md](docs/packaging.md)).
+**System deps:** OpenSSL (`libssl-dev` / Homebrew `openssl` + `pkg-config`). If headers are missing: `./scripts/fetch-openssl-headers.sh`. On macOS, set `LIBRARY_PATH` for Homebrew OpenSSL (see [docs/packaging.md](docs/packaging.md)).
 
 In your `lakefile.lean`:
 
 ```lean
 require «lean-grpc» from git
-  "https://github.com/RileyBetts/lean-grpc.git" @ "v0.5.0"
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.0.0"
 ```
 
 Then `import Grpc`. After Reservoir lists the package you can use `require «lean-grpc»` without a git URL. Packaging details and the maintainer release checklist: [docs/packaging.md](docs/packaging.md).
@@ -34,10 +34,12 @@ Then `import Grpc`. After Reservoir lists the package you can use `require «lea
 | [Getting started](docs/getting-started.md) | Typed unary helloworld, TLS, Lake dependency |
 | [Cookbooks](docs/cookbook-unary.md) | Unary · [streaming](docs/cookbook-streaming.md) · [interceptors / mTLS](docs/cookbook-interceptors.md) |
 | [Packaging](docs/packaging.md) | Lake/Reservoir layout, consumer contract, release checklist |
+| [Provenance](docs/provenance.md) | Independent protocol implementation; third-party interop protos |
 | [Architecture](docs/architecture.md) | Layering and data flow |
 | [API reference](docs/api-reference.md) | Module catalogue |
 | [Protocol mapping](docs/protocol-mapping.md) | gRPC-over-HTTP/2 mapping for this stack |
 | [Conformance](docs/conformance.md) | Scorecard, interop matrix, allowlists |
+| [Formal proofs](docs/proofs.md) | Compile-time theorems for pure codecs |
 | [TLS / Envoy](docs/tls-envoy.md) | In-process OpenSSL and sidecars |
 | [CHANGELOG](CHANGELOG.md) | Version history |
 | [ROADMAP](ROADMAP.md) | v0.5.0 → v1.0.0 (proofs + hardening) |
@@ -76,10 +78,13 @@ Rough estimates (see [conformance.md](docs/conformance.md) for detail):
 ```bash
 ./scripts/fetch-openssl-headers.sh   # if libssl-dev is unavailable
 lake build
+lake build Proofs                    # compile-time pure-codec theorems
 lake build bytesTests hpackTests h2Tests grpcTests trailersLoopback
 ./.lake/build/bin/grpcTests
 ./scripts/build_native.sh            # optional zlib_helper for peer gzip (+ tls_proxy)
 ```
+
+Formal proofs of high-leverage pure codecs (status codes, BE ints, gRPC framing, varints, HPACK integers, …): [docs/proofs.md](docs/proofs.md).
 
 ## Quick start
 
@@ -121,4 +126,4 @@ lake build helloworldServer helloworldClient benchSoak
 
 ## License
 
-SPDX **Apache-2.0** — see [LICENSE](LICENSE) (full terms) and [NOTICE](NOTICE) (copyright).
+SPDX **Apache-2.0** — see [LICENSE](LICENSE) (full terms) and [NOTICE](NOTICE) (copyright + third-party interop protos). Independent protocol implementation note: [docs/provenance.md](docs/provenance.md).

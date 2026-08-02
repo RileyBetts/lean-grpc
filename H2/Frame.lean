@@ -19,10 +19,12 @@ def FrameType.toU8 : FrameType → UInt8
   | .settings => 4 | .pushPromise => 5 | .ping => 6 | .goAway => 7
   | .windowUpdate => 8 | .continuation => 9 | .unknown n => n
 
-def FrameType.ofU8 : UInt8 → FrameType
+/-- Map wire type byte → `FrameType`. Uses `toNat` so unknown-range proofs are by `Nat` cases. -/
+def FrameType.ofU8 (n : UInt8) : FrameType :=
+  match n.toNat with
   | 0 => .data | 1 => .headers | 2 => .priority | 3 => .rstStream
   | 4 => .settings | 5 => .pushPromise | 6 => .ping | 7 => .goAway
-  | 8 => .windowUpdate | 9 => .continuation | n => .unknown n
+  | 8 => .windowUpdate | 9 => .continuation | _ => .unknown n
 
 /-- Frame flags as bitset. -/
 structure Flags where
@@ -53,15 +55,12 @@ def headerSize : Nat := 9
 
 def encode (f : Frame) : ByteArray :=
   let len : UInt32 := f.payload.size.toUInt32
-  Id.run do
-    let mut out := Bytes.BE.u24Bytes len
-    out := out.push f.type.toU8
-    out := out.push f.flags.raw
-    -- stream id 31-bit BE
-    let sid := f.streamId &&& 0x7fffffff
-    out := Bytes.Pool.pushBytes out (Bytes.BE.u32Bytes sid)
-    out := Bytes.Pool.pushBytes out f.payload
-    return out
+  let sid := f.streamId &&& 0x7fffffff
+  Bytes.BE.u24Bytes len
+    |>.push f.type.toU8
+    |>.push f.flags.raw
+    |> (Bytes.Pool.pushBytes · (Bytes.BE.u32Bytes sid))
+    |> (Bytes.Pool.pushBytes · f.payload)
 
 def decode (buf : Bytes.Slice) : Except String (Frame × Nat) := do
   if buf.size < 9 then throw "short frame header"

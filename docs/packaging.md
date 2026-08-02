@@ -10,6 +10,7 @@ lean-grpc is a single Lake package. Do not split libraries into separate repos f
 |---|---|---|
 | `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` | Library stack | Yes |
 | `LeanGrpc.lean` | Umbrella import | Yes |
+| `Proofs` | Compile-time theorems (CI only; not consumer API) | No |
 | `native/` + OpenSSL link args | TLS FFI (`tls_ffi.o`, `-lssl -lcrypto`) | Required for TLS / ADC |
 | `Tests/`, `Bench/`, `Examples/`, `scripts/`, `python_interop/`, `rust_interop/` | Dev / CI / demos | No |
 | `lakefile.lean`, `lake-manifest.json`, `lean-toolchain` | Lake package root | Required for Reservoir |
@@ -20,7 +21,7 @@ lean-grpc/
   lake-manifest.json
   lean-toolchain
   LeanGrpc.lean / Grpc.lean / H2.lean / …
-  Bytes/ Hpack/ H2/ Proto/ Grpc/ native/
+  Bytes/ Hpack/ H2/ Proto/ Grpc/ Proofs/ native/
   Examples/ Tests/ Bench/ scripts/ docs/
   LICENSE README CONTRIBUTING SECURITY CHANGELOG
 ```
@@ -37,9 +38,11 @@ lean-grpc/
 
 **Apache-2.0** (SPDX). Matches Lean 4, mathlib4, and typical Reservoir packages; fits a TLS/networking stack (explicit patent grant). Confirm GitHub’s license badge shows Apache-2.0 on the public repository; adjust `LICENSE` / `NOTICE` only if detection fails.
 
+**Provenance:** lean-grpc is an independent implementation of the published gRPC-over-HTTP/2 protocol (not a fork of official runtimes). Peer fixtures under `python_interop/proto/` and `rust_interop/proto/` retain Apache-2.0 gRPC-authors headers; see [NOTICE](../NOTICE) and [provenance.md](provenance.md).
+
 ## Consumer contract
 
-**Public libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`). Tests and examples are not API.
+**Public libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`). Tests, examples, and `Proofs` are not consumer API.
 
 **System dependencies:**
 
@@ -62,7 +65,7 @@ lake build
 
 ```lean
 require «lean-grpc» from git
-  "https://github.com/RileyBetts/lean-grpc.git" @ "v0.5.0"
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.0.0"
 ```
 
 Then `import Grpc` (and `Proto` if using bundled codecs).
@@ -73,7 +76,7 @@ Then `import Grpc` (and `Proto` if using bundled codecs).
 require «lean-grpc»   -- once listed on reservoir.lean-lang.org
 ```
 
-Package version in-tree is **0.5.0** (`lakefile.lean`, `Grpc.version`). Hosted docs: [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc).
+Package version in-tree is **1.0.0** (`lakefile.lean`, `Grpc.version`). Hosted docs: [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc). Creating the git tag on origin is a separate maintainer step (below).
 
 ## Maintainer release checklist
 
@@ -86,8 +89,8 @@ Documented only — do **not** automate tagging from CI or agent runs.
 5. **Manual version tagging (maintainer only):** on `main`, when you choose to publish:
 
    ```bash
-   git tag -a v0.5.0 -m "lean-grpc 0.5.0"
-   git push origin v0.5.0
+   git tag -a v1.0.0 -m "lean-grpc 1.0.0"
+   git push origin v1.0.0
    ```
 
    Agents and CI must not create or push tags.

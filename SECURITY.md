@@ -4,7 +4,7 @@
 
 Security fixes are applied to the published tip (`main` / `development` as released). There is no long-term LTS train yet.
 
-**Supported version:** the latest **tagged** release (e.g. `v0.5.0`). Maintainers create tags manually — see [docs/packaging.md](docs/packaging.md). Prefer GitHub Security Advisories for private reports when enabled.
+**Supported version:** the latest **tagged** release (e.g. `v1.0.0`). Maintainers create tags manually — see [docs/packaging.md](docs/packaging.md). Prefer GitHub Security Advisories for private reports when enabled.
 
 ## Reporting a vulnerability
 
@@ -31,8 +31,10 @@ You may also open a private [GitHub Security Advisory](https://github.com/RileyB
 | Reflection / channelz / binary log | Expose internals / may capture metadata — demos gate reflection/channelz behind `LEAN_GRPC_DEMO_OPS=1`; BinaryLog redacts `authorization` |
 | Codegen plugin | Hostile `.proto` / plugin stdin names are allowlisted (`[A-Za-z_][A-Za-z0-9_]*`) |
 | Native FFI | Report memory bugs with ASAN notes; CI runs `scripts/security-asan.sh` |
+| Pure codecs | Compile-time theorems in `Proofs/` (`lake build Proofs`); see [docs/proofs.md](docs/proofs.md) — complements runtime tests; does not prove TLS/FFI |
 
 Full audit + remediation status: [docs/security-review-2026-08.md](docs/security-review-2026-08.md). Hosted security summary: [rileybetts.ai/oss/lean-grpc/security](https://rileybetts.ai/oss/lean-grpc/security).
+Provenance / third-party interop protos: [docs/provenance.md](docs/provenance.md), [NOTICE](NOTICE).
 
 ## Out of scope / known limitations
 
@@ -40,7 +42,7 @@ Full audit + remediation status: [docs/security-review-2026-08.md](docs/security
 - HTTP CONNECT proxying is not implemented.
 - Huffman decode-trie rewrite and full xDS bootstrap JSON rewrite remain follow-ups (mitigated by header-list caps / existing scrape).
 - This is a young stack: prefer defense in depth (network policy, sidecar TLS, authn/z at the app layer) for high-risk deployments.
-- Formal Lean proofs of the wire stack are not yet present (see [ROADMAP.md](ROADMAP.md)); OpenSSL and zlib remain a trusted TCB.
+- Selected pure-codec theorems ship under `Proofs/` (see [docs/proofs.md](docs/proofs.md)); OpenSSL, zlib helpers, and async IO remain a trusted TCB — not an end-to-end TLS/gRPC proof.
 
 ## Acknowledgments
 

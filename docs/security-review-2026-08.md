@@ -3,7 +3,7 @@
 **Scope:** Full stack — Lean wire parsers, native OpenSSL/zlib FFI, ADC/JWT credentials, xDS/SDS, ops surfaces, codegen, CI/supply-chain, Python/Go/Rust interop helpers.  
 **Method:** Threat-model-driven static audit + targeted dynamic PoCs (compression bomb under ASAN; code-path verification).  
 **Baseline:** package tip matching this review date; docs [SECURITY.md](../SECURITY.md), [conformance.md](conformance.md), [tls-envoy.md](tls-envoy.md), [packaging.md](packaging.md).  
-**Out of scope:** ALTS / GCE channel credentials / HTTP CONNECT (allowlisted); live Google ADC without credentials; formal Lean verification.
+**Out of scope:** ALTS / GCE channel credentials / HTTP CONNECT (allowlisted); live Google ADC without credentials; end-to-end formal verification of TLS/FFI/async sessions (pure codec theorems live under `Proofs/` — see [proofs.md](proofs.md)).
 
 > **Current posture (post-hardening):** Nearly all High/Medium findings from this review are **Fixed** or **Mitigated** — see [§11 Remediation status](#11-remediation-status-post-hardening). Remaining open follow-ups are low priority (e.g. LGSEC-2026-32 bootstrap JSON rewrite; Huffman trie rewrite deferred under header-list caps). Sections §1–§10 below are the **original audit narrative** preserved for history; treat §11 and [SECURITY.md](../SECURITY.md) as the live security posture.
 

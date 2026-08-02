@@ -16,16 +16,21 @@ def WireType.toNat : WireType → Nat
   | .varint => 0 | .fixed64 => 1 | .lengthDelimited => 2
   | .startGroup => 3 | .endGroup => 4 | .fixed32 => 5
 
+/-- Protobuf base-128 varint encode. Recursive so roundtrip proofs can induct on `v`. -/
 def encodeVarint (acc : ByteArray) (v : UInt64) : ByteArray :=
-  Id.run do
-    let mut out := acc
-    let mut x := v
-    while true do
-      if x < 0x80 then
-        return out.push x.toUInt8
-      out := out.push ((x.toUInt8 &&& 0x7f) ||| 0x80)
-      x := x >>> 7
-    return out
+  if h : v < 0x80 then
+    acc.push v.toUInt8
+  else
+    have _ := h
+    encodeVarint (acc.push ((v.toUInt8 &&& 0x7f) ||| 0x80)) (v >>> 7)
+termination_by v.toNat
+decreasing_by
+  have hge : (0x80 : UInt64) ≤ v := UInt64.not_lt.mp ‹_›
+  have h128 : 128 ≤ v.toNat := (UInt64.le_iff_toNat_le).1 hge
+  have hs : (v >>> 7).toNat = v.toNat / 128 := by
+    simp [Nat.shiftRight_eq_div_pow, UInt64.toNat_shiftRight]
+  rw [hs]
+  exact Nat.div_lt_self (Nat.lt_of_lt_of_le (by decide : 0 < 128) h128) (by decide)
 
 def decodeVarint (s : Bytes.Slice) (off : Nat) : Except String (UInt64 × Nat) := do
   let mut result : UInt64 := 0

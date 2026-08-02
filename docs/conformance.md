@@ -19,6 +19,7 @@ Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, 
 | h2spec | **145/146 pass, 1 skipped** (full suite hard CI; skip is h2spec suite skip, not an allowlisted failure) |
 | Official non-auth interop | Lean↔Lean; **Go↔Lean**; **Python↔Lean**; **Rust↔Lean** (CI) |
 | Security regressions | **Hard CI**: `securityTests` + `scripts/security-asan.sh` (TLS verify model, gzip bomb cap, H2 flow-control/header-list, SDS paths, codegen allowlist) |
+| Formal proofs (pure codecs) | **Hard CI**: `lake build Proofs` — status/BE/framing/varint/HPACK/metadata theorems ([proofs.md](proofs.md)); does **not** prove TLS/FFI/e2e |
 | Stress demos + framing matrix | **Hard CI** (`scripts/run-stress-demos.sh`): VaultGauntlet, MirrorForge, SignalWeave, FramingMatrix |
 | Compression | identity/gzip/deflate/snappy; Go gzip client→Lean; Lean→Go gzip-enabled server |
 | In-process TLS | Lean→Go TLS unary (no sidecar); Lean↔Lean mTLS (client cert required/verified) |

@@ -170,11 +170,11 @@ def main (args : List String) : IO Unit := do
   | .ok _ => throw (IO.userError "details should contradict")
 
   -- user-agent / scheme helpers
-  let ua := Grpc.Metadata.userAgent "0.5.0"
+  let ua := Grpc.Metadata.userAgent "1.0.0"
   let (uan, uav) :=
     (String.ofList (ua.name.toList.map (fun b => Char.ofNat b.toNat)),
      String.ofList (ua.value.toList.map (fun b => Char.ofNat b.toNat)))
-  if uan != "user-agent" || uav != "grpc-lean/0.5.0" then throw (IO.userError "ua")
+  if uan != "user-agent" || uav != "grpc-lean/1.0.0" then throw (IO.userError "ua")
   let https := Grpc.Metadata.schemeHttps
   let hv := String.ofList (https.value.toList.map (fun b => Char.ofNat b.toNat))
   if hv != "https" then throw (IO.userError "scheme")

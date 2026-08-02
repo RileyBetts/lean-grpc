@@ -18,7 +18,9 @@ def StatusCode.toUInt32 : StatusCode → UInt32
   | .aborted => 10 | .outOfRange => 11 | .unimplemented => 12
   | .internal => 13 | .unavailable => 14 | .dataLoss => 15 | .unauthenticated => 16
 
-def StatusCode.ofUInt32 : UInt32 → StatusCode
+/-- Map wire numeric code → `StatusCode`. Uses `toNat` so out-of-range proofs are by `Nat` cases. -/
+def StatusCode.ofUInt32 (n : UInt32) : StatusCode :=
+  match n.toNat with
   | 0 => .ok | 1 => .cancelled | 2 => .unknown | 3 => .invalidArgument
   | 4 => .deadlineExceeded | 5 => .notFound | 6 => .alreadyExists
   | 7 => .permissionDenied | 8 => .resourceExhausted | 9 => .failedPrecondition

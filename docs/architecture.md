@@ -33,8 +33,9 @@ flowchart TB
 | `H2` | HTTP/2 connection state machine, framing, flow control, h2c listen/dial |
 | `Proto` | Minimal protobuf wire codec + interop / helloworld message types |
 | `Grpc` | gRPC semantics on top of H2: channels, servers, credentials, LB, xDS, ops |
+| `Proofs` | Compile-time theorems over pure codecs/maps (not a consumer dependency) |
 
-Executables (examples, interop, benches, codegen plugin) sit outside the libraries and `import Grpc`.
+Executables (examples, interop, benches, codegen plugin) sit outside the libraries and `import Grpc`. The `Proofs` library typechecks in CI via `lake build Proofs`; see [proofs.md](proofs.md).
 
 ## Client path
 
@@ -118,5 +119,6 @@ These are intentionally lightweight compared to full OpenTelemetry SDKs.
 - HTTP CONNECT / corporate HTTP_PROXY tunneling
 - ALTS / GCE channel credentials (allowlisted in `Grpc.Gcp`)
 - Full Google protobuf runtime / gRPC-Web / Connect-RPC
+- End-to-end formal verification of TLS/FFI/async sessions (pure codec proofs only; [proofs.md](proofs.md))
 
 See [protocol-mapping.md](protocol-mapping.md) and [conformance.md](conformance.md) for wire and parity details.

@@ -27,7 +27,8 @@ Release / Reservoir checklist (tagging is **manual**): [docs/packaging.md](docs/
 **Minimum (every change):**
 
 ```bash
-lake build bytesTests hpackTests h2Tests grpcTests securityTests trailersLoopback
+# Proofs = compile-time pure-codec theorems (docs/proofs.md)
+lake build Proofs bytesTests hpackTests h2Tests grpcTests securityTests trailersLoopback
 ./.lake/build/bin/bytesTests
 ./.lake/build/bin/hpackTests
 ./.lake/build/bin/h2Tests
@@ -35,6 +36,8 @@ lake build bytesTests hpackTests h2Tests grpcTests securityTests trailersLoopbac
 ./.lake/build/bin/securityTests
 ./.lake/build/bin/trailersLoopback
 ```
+
+**When touching pure codecs** (`Bytes`, `Hpack`, `H2.Frame`, `Proto.Wire`, `Grpc.Message` / `Status` / `Metadata`): keep `lake build Proofs` green; extend `Proofs/` rather than leaving theorems only as runtime asserts.
 
 **When touching wire / H2:**
 
