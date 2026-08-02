@@ -38,7 +38,8 @@ private def splitDots (s : String) : Array String :=
     out := out.push cur
     return out
 
-/-- Unverified JWT payload JSON extract for fixture tests. -/
+/-- Unverified JWT payload JSON extract for **interop/fixture tests only**.
+    Does not check signatures or `alg`; never use for production authentication. -/
 def payloadJson (jwt : String) : Except String String := do
   let parts := splitDots jwt
   if parts.size < 2 then throw "jwt parts"

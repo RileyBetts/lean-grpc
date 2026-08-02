@@ -19,8 +19,21 @@ fuser -k 10000/tcp 2>/dev/null || true
 pid=$!
 trap 'kill "$pid" 2>/dev/null || true' EXIT
 sleep 1
+run_case() {
+  local c="$1"
+  local bin
+  bin="$(go env GOPATH)/bin/client"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 60 "$bin" --server_host=127.0.0.1 --server_port=10000 --use_tls=false --test_case="$c"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout 60 "$bin" --server_host=127.0.0.1 --server_port=10000 --use_tls=false --test_case="$c"
+  else
+    # macOS often lacks GNU timeout; rely on the client’s own deadline.
+    "$bin" --server_host=127.0.0.1 --server_port=10000 --use_tls=false --test_case="$c"
+  fi
+}
 for c in "${CASES[@]}"; do
   echo "== $c"
-  timeout 60 "$(go env GOPATH)/bin/client" --server_host=127.0.0.1 --server_port=10000 --use_tls=false --test_case="$c"
+  run_case "$c"
 done
 echo OK

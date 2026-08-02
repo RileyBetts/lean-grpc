@@ -20,13 +20,17 @@ if [[ -z "$H2SPEC" ]]; then
     ver="v2.6.0"
     arch="$(uname -m)"
     case "$arch" in
-      x86_64|amd64) arch=amd64 ;;
-      aarch64|arm64) arch=arm64 ;;
-      *) echo "unsupported arch $arch"; exit 1 ;;
+      x86_64|amd64) arch=amd64; sha256=157ee0de702e01ad40e752dbf074b366027e550c8e7504f9450da2809e279318 ;;
+      *)
+        echo "unsupported arch $arch for auto-download (install h2spec or set H2SPEC=)"
+        exit 1
+        ;;
     esac
     url="https://github.com/summerwind/h2spec/releases/download/${ver}/h2spec_linux_${arch}.tar.gz"
     tmp="$(mktemp -d)"
-    curl -fsSL "$url" | tar -xz -C "$tmp"
+    curl -fsSL -o "$tmp/h2spec.tgz" "$url"
+    echo "${sha256}  $tmp/h2spec.tgz" | shasum -a 256 -c -
+    tar -xz -C "$tmp" -f "$tmp/h2spec.tgz"
     H2SPEC="$tmp/h2spec"
   fi
 fi

@@ -67,14 +67,17 @@ def main : IO Unit := do
       Grpc.Status.ok)
 
   s := Grpc.Health.registerWithWatch s health
-  s := Grpc.Reflection.register s #[
-    serviceName,
-    "grpc.health.v1.Health",
-    "grpc.channelz.v1.Channelz",
-    Grpc.Orca.oobService
-  ]
-  s := Grpc.Channelz.register s counters
   s := Grpc.Orca.registerOob s orcaRef
+  match ← IO.getEnv "LEAN_GRPC_DEMO_OPS" with
+  | some "1" =>
+    s := Grpc.Reflection.register s #[
+      serviceName,
+      "grpc.health.v1.Health",
+      "grpc.channelz.v1.Channelz",
+      Grpc.Orca.oobService
+    ]
+    s := Grpc.Channelz.register s counters
+  | _ => pure ()
 
   IO.println s!"MirrorForge[{forgeId}] on 127.0.0.1:{port.toNat}"
   Grpc.Server.serveH2c s { host := "127.0.0.1", port }

@@ -86,7 +86,9 @@ def decodeFields (s : Bytes.Slice) : Except String (Array Field) := do
     let (key, pos1) ← decodeVarint s pos
     pos := pos1
     let fn := (key >>> 3).toNat
-    let wt := match (key &&& 7).toNat with
+    let wtNat := (key &&& 7).toNat
+    if wtNat > 5 then throw s!"unknown protobuf wire type {wtNat}"
+    let wt := match wtNat with
       | 0 => WireType.varint | 1 => .fixed64 | 2 => .lengthDelimited
       | 3 => .startGroup | 4 => .endGroup | 5 => .fixed32 | _ => .varint
     match wt with

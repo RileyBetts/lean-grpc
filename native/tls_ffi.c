@@ -12,12 +12,15 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#define LEAN_GRPC_HTTP_MAX_RESP (256u * 1024u)
 
 typedef struct {
   SSL *ssl;
@@ -80,13 +83,71 @@ static int alpn_select(SSL *ssl, const unsigned char **out, unsigned char *outle
   return SSL_TLSEXT_ERR_NOACK;
 }
 
-static void openssl_once(void) {
-  static int done = 0;
-  if (done) return;
+static void openssl_once_impl(void) {
   SSL_library_init();
   SSL_load_error_strings();
   OpenSSL_add_all_algorithms();
-  done = 1;
+}
+
+static void openssl_once(void) {
+  static pthread_once_t once = PTHREAD_ONCE_INIT;
+  pthread_once(&once, openssl_once_impl);
+}
+
+static int has_crlf(const char *s) {
+  if (!s) return 0;
+  for (; *s; ++s)
+    if (*s == '\r' || *s == '\n') return 1;
+  return 0;
+}
+
+/* Extra headers may be zero or more `Name: value\r\n` lines (no blank line / smuggling). */
+static int bad_extra_headers(const char *s) {
+  if (!s || !s[0]) return 0;
+  const char *p = s;
+  while (*p) {
+    const char *line = p;
+    while (*p && *p != '\r' && *p != '\n') ++p;
+    if (p == line) return 1; /* empty line / smuggling */
+    if (*p != '\r' || p[1] != '\n') return 1;
+    p += 2;
+  }
+  return 0;
+}
+
+/* Configure client verify: system CAs (or caPath), peer+hostname; insecure disables verify. */
+static int tls_client_setup_verify(SSL_CTX *ctx, SSL *ssl, const char *ca, const char *host_for_name,
+                                   int insecure) {
+  if (insecure) {
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    return 1;
+  }
+  if (ca && ca[0]) {
+    if (!SSL_CTX_load_verify_locations(ctx, ca, NULL)) return 0;
+  } else {
+    if (!SSL_CTX_set_default_verify_paths(ctx)) return 0;
+  }
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+  if (host_for_name && host_for_name[0]) {
+    if (SSL_set1_host(ssl, host_for_name) != 1) return 0;
+  }
+  return 1;
+}
+
+static int http_append(char **body, size_t *cap, size_t *len, const char *buf, size_t r) {
+  if (*len + r + 1 > LEAN_GRPC_HTTP_MAX_RESP) return -1;
+  if (*len + r + 1 > *cap) {
+    size_t ncap = *cap ? *cap * 2 : 8192;
+    while (ncap < *len + r + 1) ncap *= 2;
+    if (ncap > LEAN_GRPC_HTTP_MAX_RESP) ncap = LEAN_GRPC_HTTP_MAX_RESP;
+    char *nb = (char *)realloc(*body, ncap);
+    if (!nb) return -2;
+    *body = nb;
+    *cap = ncap;
+  }
+  memcpy(*body + *len, buf, r);
+  *len += r;
+  return 0;
 }
 
 static int tcp_connect(const char *host, uint16_t port) {
@@ -117,7 +178,7 @@ static lean_obj_res io_error(const char *msg) {
 LEAN_EXPORT lean_obj_res lean_grpc_tls_dial(b_lean_obj_arg host_obj, uint16_t port,
                                            b_lean_obj_arg ca_obj, b_lean_obj_arg sni_obj,
                                            b_lean_obj_arg cert_obj, b_lean_obj_arg key_obj,
-                                           lean_obj_arg world) {
+                                           uint8_t insecure, lean_obj_arg world) {
   (void)world;
   openssl_once();
   const char *host = lean_string_cstr(host_obj);
@@ -135,20 +196,11 @@ LEAN_EXPORT lean_obj_res lean_grpc_tls_dial(b_lean_obj_arg host_obj, uint16_t po
   }
   SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
   SSL_CTX_set_alpn_protos(ctx, (const unsigned char *)"\x02h2", 3);
-  if (ca && ca[0]) {
-    if (!SSL_CTX_load_verify_locations(ctx, ca, NULL)) {
-      SSL_CTX_free(ctx);
-      close(fd);
-      return io_error("tls dial: load CA failed");
-    }
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-  } else {
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
-  }
   /* mTLS: present a client certificate/key when the caller supplies one. */
   if (cert && cert[0] && key && key[0]) {
     if (SSL_CTX_use_certificate_file(ctx, cert, SSL_FILETYPE_PEM) != 1 ||
-        SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) != 1) {
+        SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) != 1 ||
+        SSL_CTX_check_private_key(ctx) != 1) {
       SSL_CTX_free(ctx);
       close(fd);
       return io_error("tls dial: load client cert/key failed");
@@ -162,7 +214,14 @@ LEAN_EXPORT lean_obj_res lean_grpc_tls_dial(b_lean_obj_arg host_obj, uint16_t po
     return io_error("tls dial: SSL_new failed");
   }
   SSL_set_fd(ssl, fd);
-  if (sni && sni[0]) SSL_set_tlsext_host_name(ssl, sni);
+  const char *name = (sni && sni[0]) ? sni : host;
+  if (name && name[0]) SSL_set_tlsext_host_name(ssl, name);
+  if (!tls_client_setup_verify(ctx, ssl, ca, name, insecure ? 1 : 0)) {
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    close(fd);
+    return io_error("tls dial: verify setup failed");
+  }
   if (SSL_connect(ssl) != 1) {
     SSL_free(ssl);
     SSL_CTX_free(ctx);
@@ -196,7 +255,8 @@ LEAN_EXPORT lean_obj_res lean_grpc_tls_listen(uint16_t port, b_lean_obj_arg cert
   SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
   SSL_CTX_set_alpn_select_cb(ctx, alpn_select, NULL);
   if (SSL_CTX_use_certificate_file(ctx, cert, SSL_FILETYPE_PEM) != 1 ||
-      SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) != 1) {
+      SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) != 1 ||
+      SSL_CTX_check_private_key(ctx) != 1) {
     SSL_CTX_free(ctx);
     return io_error("tls listen: load cert/key failed");
   }
@@ -364,6 +424,7 @@ LEAN_EXPORT lean_obj_res lean_grpc_rsa_sign_sha256(b_lean_obj_arg pem_obj, b_lea
   EVP_MD_CTX_free(md);
   EVP_PKEY_free(key);
   lean_object *out = mk_byte_array(sig, sig_len);
+  OPENSSL_cleanse(sig, sig_len);
   free(sig);
   return lean_io_result_mk_ok(out);
 }
@@ -376,9 +437,12 @@ LEAN_EXPORT lean_obj_res lean_grpc_http_get(b_lean_obj_arg host_obj, uint16_t po
   const char *host = lean_string_cstr(host_obj);
   const char *path = lean_string_cstr(path_obj);
   const char *extra = lean_string_cstr(hdr_obj);
+  if (has_crlf(path) || has_crlf(host) || bad_extra_headers(extra))
+    return io_error("http get: bad path/host/headers");
   int fd = tcp_connect(host, port);
   if (fd < 0) return io_error("http get: connect failed");
   char req[4096];
+  /* `extra` is zero or more `Name: value\r\n` lines; final `\r\n` ends the header block. */
   int n = snprintf(req, sizeof(req),
                    "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n%s\r\n", path, host,
                    extra);
@@ -392,19 +456,12 @@ LEAN_EXPORT lean_obj_res lean_grpc_http_get(b_lean_obj_arg host_obj, uint16_t po
   for (;;) {
     ssize_t r = read(fd, buf, sizeof(buf));
     if (r <= 0) break;
-    if (len + (size_t)r + 1 > cap) {
-      cap = (cap ? cap * 2 : 8192);
-      while (cap < len + (size_t)r + 1) cap *= 2;
-      char *nb = (char *)realloc(body, cap);
-      if (!nb) {
-        free(body);
-        close(fd);
-        return io_error("http get: oom");
-      }
-      body = nb;
+    int ap = http_append(&body, &cap, &len, buf, (size_t)r);
+    if (ap != 0) {
+      free(body);
+      close(fd);
+      return io_error(ap == -1 ? "http get: response too large" : "http get: oom");
     }
-    memcpy(body + len, buf, (size_t)r);
-    len += (size_t)r;
   }
   close(fd);
   if (!body) return io_error("http get: empty");
@@ -424,6 +481,8 @@ LEAN_EXPORT lean_obj_res lean_grpc_http_post(b_lean_obj_arg host_obj, uint16_t p
   const char *host = lean_string_cstr(host_obj);
   const char *path = lean_string_cstr(path_obj);
   const char *ctype = lean_string_cstr(content_type_obj);
+  if (has_crlf(path) || has_crlf(host) || has_crlf(ctype))
+    return io_error("http post: CRLF in path/host/content-type");
   size_t body_len = lean_sarray_size(body_obj);
   const uint8_t *body = lean_sarray_cptr((lean_object *)body_obj);
   int fd = tcp_connect(host, port);
@@ -433,7 +492,7 @@ LEAN_EXPORT lean_obj_res lean_grpc_http_post(b_lean_obj_arg host_obj, uint16_t p
                     "POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\n"
                     "Content-Length: %zu\r\nConnection: close\r\n\r\n",
                     path, host, ctype, body_len);
-  if (hn <= 0 || write(fd, hdr, (size_t)hn) != hn ||
+  if (hn <= 0 || hn >= (int)sizeof(hdr) || write(fd, hdr, (size_t)hn) != hn ||
       (body_len > 0 && write(fd, body, body_len) != (ssize_t)body_len)) {
     close(fd);
     return io_error("http post: write failed");
@@ -444,19 +503,12 @@ LEAN_EXPORT lean_obj_res lean_grpc_http_post(b_lean_obj_arg host_obj, uint16_t p
   for (;;) {
     ssize_t r = read(fd, buf, sizeof(buf));
     if (r <= 0) break;
-    if (len + (size_t)r + 1 > cap) {
-      cap = cap ? cap * 2 : 8192;
-      while (cap < len + (size_t)r + 1) cap *= 2;
-      char *nb = (char *)realloc(resp, cap);
-      if (!nb) {
-        free(resp);
-        close(fd);
-        return io_error("http post: oom");
-      }
-      resp = nb;
+    int ap = http_append(&resp, &cap, &len, buf, (size_t)r);
+    if (ap != 0) {
+      free(resp);
+      close(fd);
+      return io_error(ap == -1 ? "http post: response too large" : "http post: oom");
     }
-    memcpy(resp + len, buf, (size_t)r);
-    len += (size_t)r;
   }
   close(fd);
   if (!resp) return io_error("http post: empty");
@@ -468,15 +520,20 @@ LEAN_EXPORT lean_obj_res lean_grpc_http_post(b_lean_obj_arg host_obj, uint16_t p
   return lean_io_result_mk_ok(out);
 }
 
-/* HTTPS POST (token exchange) — TLS without ALPN requirement. */
+/* HTTPS POST (token exchange) — TLS with peer+hostname verify by default. */
 LEAN_EXPORT lean_obj_res lean_grpc_https_post(b_lean_obj_arg host_obj, uint16_t port,
                                              b_lean_obj_arg path_obj, b_lean_obj_arg body_obj,
-                                             b_lean_obj_arg content_type_obj, lean_obj_arg world) {
+                                             b_lean_obj_arg content_type_obj,
+                                             b_lean_obj_arg ca_obj, uint8_t insecure,
+                                             lean_obj_arg world) {
   (void)world;
   openssl_once();
   const char *host = lean_string_cstr(host_obj);
   const char *path = lean_string_cstr(path_obj);
   const char *ctype = lean_string_cstr(content_type_obj);
+  const char *ca = lean_string_cstr(ca_obj);
+  if (has_crlf(path) || has_crlf(host) || has_crlf(ctype))
+    return io_error("https post: CRLF in path/host/content-type");
   size_t body_len = lean_sarray_size(body_obj);
   const uint8_t *body = lean_sarray_cptr((lean_object *)body_obj);
   int fd = tcp_connect(host, port);
@@ -487,7 +544,6 @@ LEAN_EXPORT lean_obj_res lean_grpc_https_post(b_lean_obj_arg host_obj, uint16_t 
     return io_error("https post: ctx");
   }
   SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
-  SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
   SSL *ssl = SSL_new(ctx);
   if (!ssl) {
     SSL_CTX_free(ctx);
@@ -496,6 +552,12 @@ LEAN_EXPORT lean_obj_res lean_grpc_https_post(b_lean_obj_arg host_obj, uint16_t 
   }
   SSL_set_fd(ssl, fd);
   SSL_set_tlsext_host_name(ssl, host);
+  if (!tls_client_setup_verify(ctx, ssl, ca, host, insecure ? 1 : 0)) {
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    close(fd);
+    return io_error("https post: verify setup failed");
+  }
   if (SSL_connect(ssl) != 1) {
     SSL_free(ssl);
     SSL_CTX_free(ctx);
@@ -507,7 +569,7 @@ LEAN_EXPORT lean_obj_res lean_grpc_https_post(b_lean_obj_arg host_obj, uint16_t 
                     "POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\n"
                     "Content-Length: %zu\r\nConnection: close\r\n\r\n",
                     path, host, ctype, body_len);
-  if (hn <= 0 || SSL_write(ssl, hdr, hn) != hn ||
+  if (hn <= 0 || hn >= (int)sizeof(hdr) || SSL_write(ssl, hdr, hn) != hn ||
       (body_len > 0 && SSL_write(ssl, body, (int)body_len) != (int)body_len)) {
     SSL_free(ssl);
     SSL_CTX_free(ctx);
@@ -520,21 +582,14 @@ LEAN_EXPORT lean_obj_res lean_grpc_https_post(b_lean_obj_arg host_obj, uint16_t 
   for (;;) {
     int r = SSL_read(ssl, buf, sizeof(buf));
     if (r <= 0) break;
-    if (len + (size_t)r + 1 > cap) {
-      cap = cap ? cap * 2 : 8192;
-      while (cap < len + (size_t)r + 1) cap *= 2;
-      char *nb = (char *)realloc(resp, cap);
-      if (!nb) {
-        free(resp);
-        SSL_free(ssl);
-        SSL_CTX_free(ctx);
-        close(fd);
-        return io_error("https post: oom");
-      }
-      resp = nb;
+    int ap = http_append(&resp, &cap, &len, buf, (size_t)r);
+    if (ap != 0) {
+      free(resp);
+      SSL_free(ssl);
+      SSL_CTX_free(ctx);
+      close(fd);
+      return io_error(ap == -1 ? "https post: response too large" : "https post: oom");
     }
-    memcpy(resp + len, buf, (size_t)r);
-    len += (size_t)r;
   }
   SSL_free(ssl);
   SSL_CTX_free(ctx);

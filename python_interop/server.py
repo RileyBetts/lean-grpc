@@ -20,9 +20,10 @@ def _zeros(n: int) -> bytes:
 
 
 def _grpc_status(code: int) -> grpc.StatusCode:
-    """Map wire status int → grpc.StatusCode (enum values are nested tuples)."""
+    """Map wire status int → grpc.StatusCode (value is (code, name) or IntEnum)."""
     for c in grpc.StatusCode:
-        if c.value[0].value == code:
+        raw = c.value[0] if isinstance(c.value, tuple) else c.value
+        if int(getattr(raw, "value", raw)) == int(code):
             return c
     return grpc.StatusCode.UNKNOWN
 

@@ -17,7 +17,7 @@
 #
 # Usage: to run against a real protoc instead, once available:
 #   protoc --plugin=protoc-gen-lean4=./.lake/build/bin/protoc-gen-lean4-grpc \
-#     --lean4_out=/tmp/out -I examples examples/helloworld.proto
+#     --lean4_out=/tmp/out -I Examples Examples/helloworld.proto
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

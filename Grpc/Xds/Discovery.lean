@@ -452,12 +452,30 @@ def Secret.decode (b : ByteArray) : Except String Secret := do
     | none => (none, none)
   return { name, certPath, keyPath }
 
+/-- True when `p` is an absolute path under `root` with no `..` segments. -/
+def sdsPathAllowed (p : String) (root : String) : Bool :=
+  let root :=
+    if root.endsWith "/" then (root.dropEnd 1).toString else root
+  !p.isEmpty && p.startsWith "/" && !(p.splitOn "/").contains ".." &&
+    !p.any (· == Char.ofNat 0) &&
+    (p == root || p.startsWith (root ++ "/"))
+
 /-- Overlay a decoded `Secret`'s cert/key paths onto a `Grpc.Tls.Config`
-    (existing `base` fields win when the secret doesn't carry a given path). -/
-def Secret.toTlsConfig (s : Secret) (base : Grpc.Tls.Config := {}) : Grpc.Tls.Config :=
-  { base with
-      certPath := base.certPath.orElse (fun _ => s.certPath.map System.FilePath.mk)
-      keyPath := base.keyPath.orElse (fun _ => s.keyPath.map System.FilePath.mk) }
+    (existing `base` fields win when the secret doesn't carry a given path).
+    Paths must be absolute under `LEAN_GRPC_SDS_ROOT` (default `/var/run/secrets`). -/
+def Secret.toTlsConfig (s : Secret) (base : Grpc.Tls.Config := {}) : IO Grpc.Tls.Config := do
+  let root := (← IO.getEnv "LEAN_GRPC_SDS_ROOT").getD "/var/run/secrets"
+  let check (label : String) (p? : Option String) : IO (Option System.FilePath) := do
+    match p? with
+    | none => pure none
+    | some p =>
+      if sdsPathAllowed p root then pure (some (System.FilePath.mk p))
+      else throw (IO.userError s!"SDS {label} path rejected (must be under {root}): {p}")
+  let cert ← check "cert" s.certPath
+  let key ← check "key" s.keyPath
+  return { base with
+      certPath := base.certPath.orElse (fun _ => cert)
+      keyPath := base.keyPath.orElse (fun _ => key) }
 
 /-! # Typed DiscoveryResponse builders (used by test fixtures / FakeAds). -/
 

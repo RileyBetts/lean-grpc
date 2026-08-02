@@ -22,6 +22,8 @@ trap cleanup EXIT
 sleep 0.5
 
 export LEAN_GRPC_FAKE_ADS="127.0.0.1:${ADS_PORT}"
+# FakeAds speaks cleartext h2c — explicit insecure opt-in (LGSEC-2026-08).
+export LEAN_GRPC_XDS_INSECURE=1
 # Also prove bootstrap+env path
 BOOT=/tmp/lean-grpc-xds-ads-bootstrap.json
 cat >"$BOOT" <<EOF

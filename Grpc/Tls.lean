@@ -12,10 +12,11 @@ namespace Grpc.Tls
 
     Field reuse across roles:
     * `connectH2` (client): `certPath`/`keyPath` present a client certificate
-      for mTLS when both are set; `caPath` verifies the server.
+      for mTLS when both are set; `caPath` verifies the server (empty → system trust).
     * `serveH2` (server): `certPath`/`keyPath` are the server's own identity;
       `clientCaPath` requires and verifies a client certificate (mTLS) when
-      set, otherwise clients are not asked for one. -/
+      set, otherwise clients are not asked for one.
+    * `insecureSkipVerify`: disables peer certificate verification (dev/fixtures only). -/
 structure Config where
   certPath : Option System.FilePath := none
   keyPath : Option System.FilePath := none
@@ -24,6 +25,8 @@ structure Config where
   clientCaPath : Option System.FilePath := none
   alpn : Array String := #["h2"]
   serverName : Option String := none
+  /-- When true, skip peer certificate verification (never in production). -/
+  insecureSkipVerify : Bool := false
   deriving Inhabited
 
 def envoySidecarNotes : String :=
@@ -32,7 +35,7 @@ def envoySidecarNotes : String :=
 /-- Connect with TLS+ALPN `h2`.
     Priority:
     1. `LEAN_GRPC_TLS_PROXY` — h2c to local sidecar/proxy (legacy).
-    2. In-process OpenSSL (`caPath` / peer verify optional).
+    2. In-process OpenSSL (system CA / `caPath` + hostname verify unless `insecureSkipVerify`).
     3. `LEAN_GRPC_TLS_INSECURE_FALLBACK=1` — plain h2c (dev only). -/
 def connectH2 (host : String) (port : UInt16) (cfg : Config := {}) : IO H2.ClientConn := do
   if let some proxy := ← IO.getEnv "LEAN_GRPC_TLS_PROXY" then
@@ -44,21 +47,24 @@ def connectH2 (host : String) (port : UInt16) (cfg : Config := {}) : IO H2.Clien
     IO.eprintln "WARN: LEAN_GRPC_TLS_INSECURE_FALLBACK=1 → h2c (no TLS)"
     H2.Client.connectH2c host port
   | _ =>
+    if cfg.insecureSkipVerify then
+      IO.eprintln "WARN: Tls.Config.insecureSkipVerify=true → peer certificate not verified"
     let ca := (cfg.caPath.map (·.toString)).getD ""
     let sni := cfg.serverName.getD host
     let clientCert := (cfg.certPath.map (·.toString)).getD ""
     let clientKey := (cfg.keyPath.map (·.toString)).getD ""
-    let conn ← Grpc.Native.Tls.dial host port ca sni clientCert clientKey
+    let conn ← Grpc.Native.Tls.dial host port ca sni clientCert clientKey cfg.insecureSkipVerify
     H2.Client.connectTransport (Grpc.Native.Tls.transport conn)
 
-/-- Serve with in-process TLS+ALPN when cert/key are set; otherwise h2c (+ optional sidecar). -/
+/-- Serve with in-process TLS+ALPN when cert/key are set; otherwise h2c (+ optional sidecar).
+    TLS listen binds loopback only (see native `INADDR_LOOPBACK`). -/
 partial def serveH2 (cfg : Config) (h2cfg : H2.ServerConfig) (handler : H2.StreamHandler) : IO Unit := do
   match cfg.certPath, cfg.keyPath with
   | some cert, some key =>
     let clientCa := (cfg.clientCaPath.map (·.toString)).getD ""
     let listener ← Grpc.Native.Tls.listen h2cfg.port cert.toString key.toString clientCa
     let mtlsNote := if cfg.clientCaPath.isSome then " (mTLS: client cert required)" else ""
-    IO.println s!"H2 TLS+ALPN listening on {h2cfg.host}:{h2cfg.port}{mtlsNote}"
+    IO.println s!"H2 TLS+ALPN listening on 127.0.0.1:{h2cfg.port}{mtlsNote}"
     while true do
       let conn ← Grpc.Native.Tls.accept listener
       discard <| IO.asTask (prio := .dedicated) do

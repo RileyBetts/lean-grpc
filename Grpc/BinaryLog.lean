@@ -31,10 +31,25 @@ abbrev Sink := IO.Ref (Array Event)
 
 def newSink : IO Sink := IO.mkRef #[]
 
+/-- Redact sensitive header values (authorization, `*-bin` secrets). -/
+def redactHeaders (headers : Array Hpack.HeaderField) : Array Hpack.HeaderField :=
+  headers.map fun h =>
+    let n :=
+      match String.fromUTF8? h.name with
+      | some s => s.toLower
+      | none => ""
+    if n == "authorization" || n.endsWith "-bin" then
+      ⟨h.name, Metadata.ascii "[REDACTED]"⟩
+    else h
+
 def logEvent (sink : Sink) (kind : EventKind) (callId : Nat) (headers : Array Hpack.HeaderField := #[])
     (payload : ByteArray := ByteArray.empty) (status : Option Status := none) : IO Unit := do
   let t ← IO.monoMsNow
-  sink.modify (·.push { kind, callId, timestampMs := t, headers, payload, status })
+  sink.modify (·.push {
+    kind, callId, timestampMs := t
+    headers := redactHeaders headers
+    payload, status
+  })
 
 def events (sink : Sink) : IO (Array Event) := sink.get
 

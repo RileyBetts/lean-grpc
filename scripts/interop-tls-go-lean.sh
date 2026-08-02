@@ -16,7 +16,7 @@ chmod +x scripts/build_native.sh scripts/gen-test-certs.sh scripts/fetch-openssl
 lake build interopClient
 
 if [[ ! -x "$GOBIN/server" ]]; then
-  go install google.golang.org/grpc/interop/server@latest
+  go install google.golang.org/grpc/interop/server@v1.73.0
 fi
 
 fuser -k "${TLS_PORT}/tcp" 2>/dev/null || true

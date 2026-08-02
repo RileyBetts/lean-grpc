@@ -129,7 +129,7 @@ Timeout strings follow gRPC (`H`/`M`/`S`/`m`/`u`/`n`). Compression algorithms: `
 **Text path (Lake smoke; ByteArray placeholders only):**
 
 ```bash
-LEAN_GRPC_OUT=/tmp/gen LEAN_GRPC_PROTO=examples/helloworld.proto \
+LEAN_GRPC_OUT=/tmp/gen LEAN_GRPC_PROTO=Examples/helloworld.proto \
   ./.lake/build/bin/protoc-gen-lean4-grpc
 ```
 
@@ -145,14 +145,16 @@ Current descriptor-codegen limits: nested messages / `repeated` / `oneof` / maps
 
 ## Depend from another Lake project
 
+**System deps:** OpenSSL + zlib (`libssl-dev` / Homebrew `openssl`, plus `pkg-config` / `zlib`). Fallback: `./scripts/fetch-openssl-headers.sh`.
+
 In your `lakefile.lean`:
 
 ```lean
 require «lean-grpc» from git
-  "https://github.com/RileyBetts/lean-grpc.git" @ "v0.5.0"  -- or a commit/branch
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v0.5.0"
 ```
 
-Then `import Grpc`. Linking OpenSSL (`-lssl -lcrypto`) is pulled in via the `Grpc` Lake library (not via Bytes/Hpack/H2 alone). For peer gzip against foreign stacks, set `LEAN_GRPC_ZLIB_HELPER` after `./scripts/build_native.sh`.
+Then `import Grpc` (and `Proto` if you use the bundled codecs). Public libs: `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc`. Linking OpenSSL (`-lssl -lcrypto`) is pulled in via the `Grpc` Lake library (not via Bytes/Hpack/H2 alone). For peer gzip against foreign stacks, set `LEAN_GRPC_ZLIB_HELPER` after `./scripts/build_native.sh`. Full packaging notes: [packaging.md](packaging.md).
 
 Pin a commit SHA if the `v0.5.0` tag is not yet on the remote you use.
 
@@ -161,6 +163,7 @@ Pin a commit SHA if the `v0.5.0` tag is not yet on the remote you use.
 - [Cookbook: typed unary](cookbook-unary.md)
 - [Cookbook: streaming](cookbook-streaming.md)
 - [Cookbook: interceptors / auth / mTLS](cookbook-interceptors.md)
+- [Packaging](packaging.md) — Lake/Reservoir consumer contract
 - [Architecture](architecture.md) — how the stack layers
 - [API reference](api-reference.md) — module catalogue
 - [Conformance](conformance.md) — what is tested vs allowlisted

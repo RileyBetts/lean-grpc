@@ -20,8 +20,16 @@ cleanup() { kill "$pid" 2>/dev/null || true; }
 trap cleanup EXIT
 sleep 1.0
 
+run_line_buffered() {
+  if command -v stdbuf >/dev/null 2>&1; then
+    stdbuf -oL -eL "$@"
+  else
+    "$@"
+  fi
+}
+
 set +e
-stdbuf -oL -eL ./.lake/build/bin/framingMatrixLeanClient 127.0.0.1 "$PORT"
+run_line_buffered ./.lake/build/bin/framingMatrixLeanClient 127.0.0.1 "$PORT"
 ec_lean=$?
 set -e
 
@@ -30,7 +38,7 @@ if [[ ! -f go.sum ]]; then
   go mod tidy
 fi
 set +e
-stdbuf -oL -eL go run . 127.0.0.1 "$PORT"
+run_line_buffered go run . 127.0.0.1 "$PORT"
 ec_go=$?
 set -e
 

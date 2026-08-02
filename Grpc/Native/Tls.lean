@@ -16,12 +16,14 @@ private opaque ListenerImpl.Pointed : NonemptyType.{0}
 def Listener : Type := ListenerImpl.Pointed.type
 instance : Nonempty Listener := ListenerImpl.Pointed.property
 
-/-- Dial a TLS+ALPN `h2` connection. `certPath`/`keyPath` present a client
-    certificate (mTLS) when both are non-empty; `caPath` verifies the server
-    when non-empty (otherwise the peer certificate is not checked). -/
+/-- Dial a TLS+ALPN `h2` connection.
+    * `certPath`/`keyPath` present a client certificate (mTLS) when both are non-empty.
+    * `caPath` non-empty loads that CA file; empty uses the system trust store.
+    * `insecureSkipVerify = true` disables peer verify (dev/fixtures only). -/
 @[extern "lean_grpc_tls_dial"]
 opaque dial (host : @& String) (port : UInt16) (caPath : @& String) (serverName : @& String)
-    (certPath : @& String := "") (keyPath : @& String := "") : IO Conn
+    (certPath : @& String := "") (keyPath : @& String := "")
+    (insecureSkipVerify : Bool := false) : IO Conn
 
 /-- Listen for TLS+ALPN `h2` connections presenting `certPath`/`keyPath` as the
     server identity. When `clientCaPath` is non-empty, clients are required to
@@ -59,8 +61,11 @@ opaque httpGet (host : @& String) (port : UInt16) (path : @& String) (extraHeade
 opaque httpPost (host : @& String) (port : UInt16) (path : @& String) (body : @& ByteArray)
     (contentType : @& String) : IO String
 
+/-- HTTPS POST with peer+hostname verify (system CAs unless `caPath` set).
+    `insecureSkipVerify` is for tests only. -/
 @[extern "lean_grpc_https_post"]
 opaque httpsPost (host : @& String) (port : UInt16) (path : @& String) (body : @& ByteArray)
-    (contentType : @& String) : IO String
+    (contentType : @& String) (caPath : @& String := "") (insecureSkipVerify : Bool := false) :
+    IO String
 
 end Grpc.Native.Tls

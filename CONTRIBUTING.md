@@ -5,12 +5,13 @@ Thanks for helping improve the Lean 4 gRPC stack. This document covers local set
 ## Development setup
 
 1. Install [elan](https://github.com/leanprover/elan) / Lean 4 matching `lean-toolchain` (4.32.x).
-2. Install OpenSSL headers (`libssl-dev` / `pkg-config`) or run `./scripts/fetch-openssl-headers.sh`.
-3. Optional: Go 1.24+, Python 3.12+, and Rust (`cargo`) for interop matrices; `zlib1g-dev` for the optional native gzip helper (`LEAN_GRPC_ZLIB_HELPER`).
+2. Install OpenSSL headers (`libssl-dev` / `pkg-config` on Debian/Ubuntu; Homebrew `openssl` + `pkg-config` on macOS) or run `./scripts/fetch-openssl-headers.sh`.
+3. Optional: Go 1.24+, Python 3.12+, and Rust (`cargo`) for interop matrices; `zlib1g-dev` (or Homebrew `zlib`) for the optional native gzip helper (`LEAN_GRPC_ZLIB_HELPER`).
 
 ```bash
+./scripts/fetch-openssl-headers.sh   # no-op when system headers exist
 lake build
-./scripts/build_native.sh
+./scripts/build_native.sh            # zlib_helper (+ optional tls_proxy)
 ```
 
 ## Branching
@@ -19,16 +20,19 @@ lake build
 - `development` — integration branch  
 - Feature work: branch from `development` (e.g. `feature/…`)
 
+Release / Reservoir checklist (tagging is **manual**): [docs/packaging.md](docs/packaging.md).
+
 ## Tests to run before a PR
 
 **Minimum (every change):**
 
 ```bash
-lake build bytesTests hpackTests h2Tests grpcTests trailersLoopback
+lake build bytesTests hpackTests h2Tests grpcTests securityTests trailersLoopback
 ./.lake/build/bin/bytesTests
 ./.lake/build/bin/hpackTests
 ./.lake/build/bin/h2Tests
 ./.lake/build/bin/grpcTests
+./.lake/build/bin/securityTests
 ./.lake/build/bin/trailersLoopback
 ```
 
@@ -74,6 +78,27 @@ CI (`.github/workflows/ci.yml`) is the source of truth for the hard gate set.
 - Update [docs/conformance.md](docs/conformance.md) when changing tested vs allowlisted behavior.
 - Do not claim live-GCP coverage for ALTS / GCE channel credentials; keep them in `Grpc.Gcp.deferredCases`.
 - Avoid secret materials in the repo (certs in tests should be generated at runtime, e.g. `tlsLoopback`).
+
+## Security practices for contributors
+
+- **Never weaken TLS defaults.** Peer + hostname verify is on by default (system CA when `caPath` is empty). New insecure behavior must be an explicit opt-in (`insecureSkipVerify`, `LEAN_GRPC_*_INSECURE`, dual `ALLOW_*` gates) that prints a stderr `WARN`.
+- **Hostile peers.** Parsers (H2/HPACK/Proto/Message) must assume untrusted input. Size limits apply to **decompressed** payloads, not only wire length.
+- **Env overrides are test-only.** `LEAN_GRPC_TOKEN_*`, `LEAN_GRPC_GCE_METADATA`, `LEAN_GRPC_RESOLVE_ADDRS`, `LEAN_GRPC_XDS_INSECURE`, helper paths, etc. require the matching `ALLOW_*` / insecure flag. Do not document them as production knobs.
+- **No secrets in logs or BinaryLog.** Redact `authorization` and similar; never interpolate token response bodies into errors.
+- **Jwt helpers are fixtures.** `Grpc.Jwt` payload scrape is unverified — interop only, never production auth.
+- **Ops surfaces.** Do not register reflection/channelz on demo servers without `LEAN_GRPC_DEMO_OPS=1`.
+- **Reporting.** Follow [SECURITY.md](SECURITY.md); do not open public issues for vulnerabilities.
+- **Closing findings.** When fixing an `LGSEC-2026-*` item, update the remediation status table in [docs/security-review-2026-08.md](docs/security-review-2026-08.md).
+
+**Security-focused tests (run when touching TLS/wire/compression/ADC/xDS/codegen):**
+
+```bash
+lake build securityTests
+./.lake/build/bin/securityTests
+chmod +x scripts/security-asan.sh && ./scripts/security-asan.sh
+# Also when touching H2:
+./scripts/h2spec.sh
+```
 
 ## Documentation
 

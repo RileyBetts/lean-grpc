@@ -18,6 +18,7 @@ Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, 
 | vs grpc-go app surfaces | **~93% implemented / ~88% tested** (see table above) |
 | h2spec | **145/146 pass, 1 skipped** (full suite hard CI; skip is h2spec suite skip, not an allowlisted failure) |
 | Official non-auth interop | Lean↔Lean; **Go↔Lean**; **Python↔Lean**; **Rust↔Lean** (CI) |
+| Security regressions | **Hard CI**: `securityTests` + `scripts/security-asan.sh` (TLS verify model, gzip bomb cap, H2 flow-control/header-list, SDS paths, codegen allowlist) |
 | Stress demos + framing matrix | **Hard CI** (`scripts/run-stress-demos.sh`): VaultGauntlet, MirrorForge, SignalWeave, FramingMatrix |
 | Compression | identity/gzip/deflate/snappy; Go gzip client→Lean; Lean→Go gzip-enabled server |
 | In-process TLS | Lean→Go TLS unary (no sidecar); Lean↔Lean mTLS (client cert required/verified) |
@@ -53,7 +54,7 @@ Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, 
 | Compression | Live Go with gzip codec registered (`Tests/GoGzipServer`) |
 | TLS | Live Go TLS server + Lean in-process client; Lean↔Lean mTLS loopback (`tlsLoopback`, self-signed CA via system `openssl`) |
 | ADC | Local HTTP mock (`scripts/mock-adc-server.py`) in CI; `scripts/run-adc-live.sh` documents a real-Google check (manual/nightly, needs live credentials) |
-| xDS ADS | Lean `fakeAdsServer` speaking chained LDS/RDS/CDS/EDS/SDS + NACK-triggering resource |
+| xDS ADS | Lean `fakeAdsServer` speaking chained LDS/RDS/CDS/EDS/SDS + NACK-triggering resource; CI sets `LEAN_GRPC_XDS_INSECURE=1` (cleartext h2c FakeAds only) |
 | Codegen (real protoc-plugin path) | Hand-built binary `CodeGeneratorRequest` fixture piped directly into `protoc-gen-lean4-grpc`'s stdin (no `protoc` binary required/available in CI) |
 | grpclb | Unit-level (`Grpc.Grpclb` decode/pick helpers); no live grpclb balancer server in CI |
 | ALTS / GCE channel creds | **Not tested** — allowlisted |
@@ -66,7 +67,7 @@ Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, 
 | empty_unary … timeout_on_sleeping_server (core) | ✓ | ✓ | ✓ |
 | client/server_compressed_* | ✓ | gzip helper | ✓ gzip server |
 | pick_first_unary | ✓ | — | ✓ |
-| cacheable_unary | ✓ (GET verb → EmptyCall) | — (needs caching proxy; not run) | ✓ vs Go; — vs Python (C-core rejects GET) |
+| cacheable_unary | ✓ (GET verb → EmptyCall) | — (needs caching proxy; not run) | — vs Go (GET EmptyCall → INTERNAL on recent grpc-go); — vs Python |
 | jwt / oauth / per_rpc | ✓ fixture | — | — |
 | orca_per_rpc | ✓ | — | — |
 | xds_static_unary / xds_ads_unary / xds_ads_chain_unary / xds_ads_nack | ✓ | — | — |
@@ -75,9 +76,10 @@ Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, 
 
 Notes:
 - `cacheable_unary` here checks the GET-verb wire mechanism (safe/idempotent calls use
-  `:method: GET`) against `EmptyCall` rather than replicating the official test
-  framework's full `CacheableUnaryCall` + caching-proxy + timestamp-equality assertions,
-  which require infrastructure (a real caching proxy) outside this repo's scope.
+  `:method: GET`) against `EmptyCall` in Lean↔Lean CI, rather than replicating the official
+  `CacheableUnaryCall` + caching-proxy + timestamp-equality assertions (infrastructure outside
+  this repo). It is not run against recent grpc-go interop servers (GET EmptyCall → INTERNAL)
+  or Python C-core (rejects GET).
 - `cancel_after_begin` / `cancel_after_first_response` now assert `CANCELLED` (grpc-status 1)
   after the client-initiated RST, using the same RST→trailers mapping (`H2.Client.rstToTrailers`)
   applied locally as soon as the client sends the reset.

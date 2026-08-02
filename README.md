@@ -2,9 +2,22 @@
 
 General-purpose **Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
 
-Standalone project. Consumers depend on it via Lake.
+Standalone Lake package (**0.5.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
 
-**Libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (plus examples/tests).
+**Public libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`). Tests and examples are not API.
+
+## Install / depend
+
+**System deps:** OpenSSL + zlib (Debian/Ubuntu: `libssl-dev pkg-config zlib1g-dev`; macOS Homebrew: `openssl` / `openssl@3` + `pkg-config`). If headers are missing: `./scripts/fetch-openssl-headers.sh`. On macOS, set `LIBRARY_PATH` so the linker finds SDK `libz` and Homebrew OpenSSL (see [docs/packaging.md](docs/packaging.md)).
+
+In your `lakefile.lean`:
+
+```lean
+require «lean-grpc» from git
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v0.5.0"
+```
+
+Then `import Grpc`. After Reservoir lists the package you can use `require «lean-grpc»` without a git URL. Packaging details and the maintainer release checklist: [docs/packaging.md](docs/packaging.md).
 
 ## Documentation
 
@@ -13,11 +26,13 @@ Standalone project. Consumers depend on it via Lake.
 | [docs/README.md](docs/README.md) | Documentation index |
 | [Getting started](docs/getting-started.md) | Typed unary helloworld, TLS, Lake dependency |
 | [Cookbooks](docs/cookbook-unary.md) | Unary · [streaming](docs/cookbook-streaming.md) · [interceptors / mTLS](docs/cookbook-interceptors.md) |
+| [Packaging](docs/packaging.md) | Lake/Reservoir layout, consumer contract, release checklist |
 | [Architecture](docs/architecture.md) | Layering and data flow |
 | [API reference](docs/api-reference.md) | Module catalogue |
 | [Protocol mapping](docs/protocol-mapping.md) | gRPC-over-HTTP/2 mapping for this stack |
 | [Conformance](docs/conformance.md) | Scorecard, interop matrix, allowlists |
 | [TLS / Envoy](docs/tls-envoy.md) | In-process OpenSSL and sidecars |
+| [CHANGELOG](CHANGELOG.md) | Version history |
 | [CONTRIBUTING](CONTRIBUTING.md) | Dev setup and PR expectations |
 | [SECURITY](SECURITY.md) | Vulnerability reporting |
 
@@ -97,4 +112,4 @@ lake build helloworldServer helloworldClient benchSoak
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE) (full terms) and [NOTICE](NOTICE) (copyright).
+SPDX **Apache-2.0** — see [LICENSE](LICENSE) (full terms) and [NOTICE](NOTICE) (copyright).

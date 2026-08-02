@@ -9,6 +9,7 @@ import Hpack
 import Grpc.Metadata
 import Grpc.Stream
 import Grpc.Resolver
+import Grpc.Tls
 
 /-! # grpclb — thin client-side `grpc.lb.v1.LoadBalancer/BalanceLoad` shim.
 
@@ -22,15 +23,24 @@ import Grpc.Resolver
     subset. -/
 namespace Grpc.Grpclb
 
-private def adsHeaders (host : String) : Array Hpack.HeaderField :=
+private def lbHeaders (host : String) (useHttps : Bool) : Array Hpack.HeaderField :=
   #[
     Metadata.methodPost,
-    Metadata.schemeHttp,
+    if useHttps then Metadata.schemeHttps else Metadata.schemeHttp,
     ⟨Metadata.ascii ":authority", Metadata.ascii host⟩,
     Metadata.path "grpc.lb.v1.LoadBalancer" "BalanceLoad",
     Metadata.contentTypeGrpc,
     Metadata.teTrailers
   ]
+
+/-- Cleartext grpclb only with `LEAN_GRPC_XDS_INSECURE=1` (shared test escape with ADS). -/
+private def connectBalancer (balancer : Resolver.Address) : IO (H2.ClientConn × Bool) := do
+  match ← IO.getEnv "LEAN_GRPC_XDS_INSECURE" with
+  | some "1" =>
+    IO.eprintln "WARN: LEAN_GRPC_XDS_INSECURE=1 → grpclb over cleartext h2c"
+    pure (← H2.Client.connectH2c balancer.host balancer.port, false)
+  | _ =>
+    pure (← Grpc.Tls.connectH2 balancer.host balancer.port {}, true)
 
 /-- One entry of `ServerList.servers`. `ipAddress` is the raw (4- or 16-byte) address as sent
     on the wire; `drop = true` means the client should locally fail/drop the call using this
@@ -92,8 +102,8 @@ def liveAddresses (servers : Array Server) : Array Resolver.Address :=
     opens a fresh `BalanceLoad` stream, reads exactly one response, then half-closes. -/
 def fetchServerList (balancer : Resolver.Address) (serviceName : String) :
     IO (Array Resolver.Address) := do
-  let conn ← H2.Client.connectH2c balancer.host balancer.port
-  let stream ← Stream.openCall conn (adsHeaders balancer.host)
+  let (conn, useHttps) ← connectBalancer balancer
+  let stream ← Stream.openCall conn (lbHeaders balancer.host useHttps)
   Stream.StreamWriter.send stream.writer (initialRequest serviceName)
   Stream.StreamWriter.halfClose stream.writer
   match ← Stream.StreamReader.recv? stream.reader with

@@ -140,7 +140,8 @@ partial def serveConn (t : ByteTransport) (handler : StreamHandler) : IO Unit :=
   sendFrames t #[Frame.settings #[
     (.initialWindowSize, st.ourSettings.initialWindowSize),
     (.maxConcurrentStreams, st.ourSettings.maxConcurrentStreams),
-    (.maxFrameSize, st.ourSettings.maxFrameSize)
+    (.maxFrameSize, st.ourSettings.maxFrameSize),
+    (.maxHeaderListSize, st.ourSettings.maxHeaderListSize)
   ]]
   let mut buf := leftover
   if buf.size > 0 then

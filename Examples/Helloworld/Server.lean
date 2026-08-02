@@ -14,7 +14,12 @@ def main : IO Unit := do
     let reply : helloworld.HelloReply := { message := s!"Hello, {req.name}" }
     Grpc.Channelz.recordSuccess counters
     return (reply, Grpc.Status.ok)
-  s := Grpc.Health.registerWithWatch s healthStatus
-  s := Grpc.Reflection.register s #["helloworld.Greeter", "grpc.health.v1.Health", "grpc.channelz.v1.Channelz"]
-  s := Grpc.Channelz.register s counters
+  -- Ops surfaces (reflection/channelz) require LEAN_GRPC_DEMO_OPS=1 (CI sets this for opsSmoke).
+  match ← IO.getEnv "LEAN_GRPC_DEMO_OPS" with
+  | some "1" =>
+    s := Grpc.Health.registerWithWatch s healthStatus
+    s := Grpc.Reflection.register s #["helloworld.Greeter", "grpc.health.v1.Health", "grpc.channelz.v1.Channelz"]
+    s := Grpc.Channelz.register s counters
+  | _ =>
+    s := Grpc.Health.registerWithWatch s healthStatus
   Grpc.Server.serveH2c s { host := "127.0.0.1", port := 50051 }

@@ -16,22 +16,17 @@ cd "$ROOT"
 
 if [[ ! -d .venv-interop ]]; then
   python3 -m venv .venv-interop
-  # shellcheck disable=SC1091
-  source .venv-interop/bin/activate
-  pip install -q --upgrade pip
-  pip install -q 'grpcio>=1.62' 'grpcio-tools>=1.62' protobuf
-else
-  # shellcheck disable=SC1091
-  source .venv-interop/bin/activate
 fi
+# shellcheck disable=SC1091
+source .venv-interop/bin/activate
+pip install -q --upgrade pip
+pip install -q -r python_interop/requirements.txt
 
-# Ensure stubs exist
-if [[ ! -f python_interop/test_pb2_grpc.py ]]; then
-  python -m grpc_tools.protoc -I python_interop/proto \
-    --python_out=python_interop --grpc_python_out=python_interop \
-    python_interop/proto/empty.proto python_interop/proto/messages.proto \
-    python_interop/proto/test.proto
-fi
+# Always regenerate stubs with the pinned grpcio-tools so gencode matches runtime.
+python -m grpc_tools.protoc -I python_interop/proto \
+  --python_out=python_interop --grpc_python_out=python_interop \
+  python_interop/proto/empty.proto python_interop/proto/messages.proto \
+  python_interop/proto/test.proto
 
 lake build interopServer
 fuser -k "${PORT}/tcp" 2>/dev/null || true
