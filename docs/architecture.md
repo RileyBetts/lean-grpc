@@ -1,6 +1,6 @@
 # Architecture
 
-lean-grpc is a layered Lean 4 library: bytes → HPACK → HTTP/2 → gRPC application APIs, with optional native OpenSSL/zlib bridges.
+lean-grpc is a layered Lean 4 library: bytes → HPACK → HTTP/2 → gRPC application APIs, with in-process OpenSSL TLS via a small native FFI.
 
 ```mermaid
 flowchart TB
@@ -10,7 +10,7 @@ flowchart TB
   H2[H2: Client Server Connection Frames]
   Hpack[Hpack: encode decode]
   Bytes[Bytes: Slice Pool BE]
-  Native[Native: tls_ffi zlib_bridge]
+  Native[Native: tls_ffi]
   TCP[Std.Async.TCP / ByteTransport]
 
   App --> Grpc
@@ -108,10 +108,11 @@ These are intentionally lightweight compared to full OpenTelemetry SDKs.
 
 | Artifact | Purpose |
 |---|---|
-| `native/tls_ffi.c` | OpenSSL client/server with ALPN `h2`, optional mTLS |
-| `native/zlib_bridge.c` | Peer-compatible gzip inflate/deflate helper |
+| `native/tls_ffi.c` | OpenSSL client/server with ALPN `h2`, optional mTLS — linked into `Grpc` |
+| `native/zlib_helper.c` (optional) | Process helper for peer gzip; not linked into Lean |
+| `native/zlib_bridge.c` | Reference/source only — **not** linked via Lake |
 
-Linked into `Grpc` via Lake `moreLinkObjs` / `-lssl -lcrypto -lz`.
+`Grpc` links `tls_ffi.o` with `-lssl -lcrypto`. Peer compression uses helpers / system `gzip` / stored-deflate fallbacks (see [packaging.md](packaging.md)).
 
 ## Non-goals (current)
 

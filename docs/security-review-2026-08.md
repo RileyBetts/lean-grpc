@@ -1,25 +1,29 @@
 # lean-grpc cybersecurity & vulnerability review (2026-08)
 
-**Scope:** Full stack — Lean wire parsers, native OpenSSL/zlib FFI, ADC/JWT credentials, xDS/SDS, ops surfaces, codegen, CI/supply-chain, Python/Go interop helpers.  
+**Scope:** Full stack — Lean wire parsers, native OpenSSL/zlib FFI, ADC/JWT credentials, xDS/SDS, ops surfaces, codegen, CI/supply-chain, Python/Go/Rust interop helpers.  
 **Method:** Threat-model-driven static audit + targeted dynamic PoCs (compression bomb under ASAN; code-path verification).  
 **Baseline:** package tip matching this review date; docs [SECURITY.md](../SECURITY.md), [conformance.md](conformance.md), [tls-envoy.md](tls-envoy.md), [packaging.md](packaging.md).  
-**Out of scope:** ALTS / GCE channel credentials / HTTP CONNECT (allowlisted); live Google ADC without credentials; end-to-end formal verification of TLS/FFI/async sessions (pure codec theorems live under `Proofs/` — see [proofs.md](proofs.md)); in-tree code fixes (tracked as remediation backlog below).
+**Out of scope:** ALTS / GCE channel credentials / HTTP CONNECT (allowlisted); live Google ADC without credentials; end-to-end formal verification of TLS/FFI/async sessions (pure codec theorems live under `Proofs/` — see [proofs.md](proofs.md)).
+
+> **Current posture (post-hardening):** Nearly all High/Medium findings from this review are **Fixed** or **Mitigated** — see [§11 Remediation status](#11-remediation-status-post-hardening). Remaining open follow-ups are low priority (e.g. LGSEC-2026-32 bootstrap JSON rewrite; Huffman trie rewrite deferred under header-list caps). Sections §1–§10 below are the **original audit narrative** preserved for history; treat §11 and [SECURITY.md](../SECURITY.md) as the live security posture.
 
 ---
 
 ## 1. Executive summary
 
-lean-grpc is a young Lean 4 gRPC stack with strong **wire conformance gates** (h2spec, interop, stress demos) and useful **documented insecure escapes**. The review found **no confirmed remote memory-corruption RCE** in Lean code, but several **High** issues that break intended confidentiality/integrity for TLS and ADC, and **unauthenticated DoS** paths against hostile peers.
+*(Historical findings at review time — superseded by §11.)*
 
-**Top residual risks for production use today:**
+lean-grpc is a young Lean 4 gRPC stack with strong **wire conformance gates** (h2spec, interop, stress demos) and useful **documented insecure escapes**. The review found **no confirmed remote memory-corruption RCE** in Lean code, but several **High** issues that broke intended confidentiality/integrity for TLS and ADC, and **unauthenticated DoS** paths against hostile peers.
 
-1. ADC token HTTPS exchange and empty-CA TLS dial **disable certificate verification** (MITM).
-2. Even with a CA loaded, **hostname verification is missing**.
-3. **gzip/deflate bombs** expand past `maxMsgSize` (verified: 20 MiB from ~20 KiB compressed under ASAN with no output cap).
-4. HTTP/2 **receive flow control** and **header-list size** are not enforced → memory DoS.
-5. xDS ADS/grpclb speak **cleartext h2c**; SDS API accepts **arbitrary filesystem paths** from the control plane.
+**Top risks identified in the original review** (most now fixed — see §11):
 
-**Verdict:** Suitable for localhost / mesh-with-external-TLS experiments with defense in depth. **Not yet suitable** as a standalone internet-facing gRPC stack without remediating P0/P1 items and terminating TLS/auth at a trusted sidecar or fixing in-process verify paths.
+1. ADC token HTTPS exchange and empty-CA TLS dial **disabled certificate verification** (MITM).
+2. Even with a CA loaded, **hostname verification was missing**.
+3. **gzip/deflate bombs** expanded past `maxMsgSize`.
+4. HTTP/2 **receive flow control** and **header-list size** were not enforced → memory DoS.
+5. xDS ADS/grpclb spoke **cleartext h2c**; SDS API accepted **arbitrary filesystem paths** from the control plane.
+
+**Original verdict (review time):** Suitable for localhost / mesh-with-external-TLS experiments with defense in depth; not yet suitable as a standalone internet-facing stack without remediating P0/P1. **Updated stance:** P0/P1 items in §11 are fixed; still prefer defense in depth for high-risk deployments (see [SECURITY.md](../SECURITY.md)).
 
 ---
 

@@ -4,17 +4,17 @@
 
 Security fixes are applied to the published tip (`main` / `development` as released). There is no long-term LTS train yet.
 
-**Supported version:** the latest **tagged** release (e.g. `v1.0.0`) once tags exist; until then, use a recent commit from `main`. Maintainers create tags manually — see [docs/packaging.md](docs/packaging.md). After the repository is public, prefer GitHub Security Advisories for private reports when enabled.
+**Supported version:** the latest **tagged** release (e.g. `v1.0.0`). Maintainers create tags manually — see [docs/packaging.md](docs/packaging.md). Prefer GitHub Security Advisories for private reports when enabled.
 
 ## Reporting a vulnerability
 
 Please **do not** open a public GitHub issue for security-sensitive reports.
 
-1. Email the maintainer listed in the repository owner profile / commit history for [RileyBetts/lean-grpc](https://github.com/RileyBetts/lean-grpc), with subject prefix `[SECURITY] lean-grpc`.
+1. Email **security@rileybetts.ai** with subject prefix `[SECURITY] lean-grpc`.
 2. Include: affected revision, impact, reproduction steps, and any proposed fix.
 3. Allow a reasonable window for a patch or advisory before public disclosure.
 
-If private contact fails, open a GitHub Security Advisory on the repository (if enabled) or a minimal private maintainer contact request without exploit details.
+You may also open a private [GitHub Security Advisory](https://github.com/RileyBetts/lean-grpc/security/advisories) on the repository when that channel is enabled.
 
 ## Security-relevant surfaces
 
@@ -33,7 +33,7 @@ If private contact fails, open a GitHub Security Advisory on the repository (if 
 | Native FFI | Report memory bugs with ASAN notes; CI runs `scripts/security-asan.sh` |
 | Pure codecs | Compile-time theorems in `Proofs/` (`lake build Proofs`); see [docs/proofs.md](docs/proofs.md) — complements runtime tests; does not prove TLS/FFI |
 
-Full audit + remediation status: [docs/security-review-2026-08.md](docs/security-review-2026-08.md).  
+Full audit + remediation status: [docs/security-review-2026-08.md](docs/security-review-2026-08.md). Hosted security summary: [rileybetts.ai/oss/lean-grpc/security](https://rileybetts.ai/oss/lean-grpc/security).
 Provenance / third-party interop protos: [docs/provenance.md](docs/provenance.md), [NOTICE](NOTICE).
 
 ## Out of scope / known limitations
@@ -42,6 +42,7 @@ Provenance / third-party interop protos: [docs/provenance.md](docs/provenance.md
 - HTTP CONNECT proxying is not implemented.
 - Huffman decode-trie rewrite and full xDS bootstrap JSON rewrite remain follow-ups (mitigated by header-list caps / existing scrape).
 - This is a young stack: prefer defense in depth (network policy, sidecar TLS, authn/z at the app layer) for high-risk deployments.
+- Selected pure-codec theorems ship under `Proofs/` (see [docs/proofs.md](docs/proofs.md)); OpenSSL, zlib helpers, and async IO remain a trusted TCB — not an end-to-end TLS/gRPC proof.
 
 ## Acknowledgments
 

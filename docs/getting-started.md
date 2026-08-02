@@ -145,7 +145,7 @@ Current descriptor-codegen limits: nested messages / `repeated` / `oneof` / maps
 
 ## Depend from another Lake project
 
-**System deps:** OpenSSL + zlib (`libssl-dev` / Homebrew `openssl`, plus `pkg-config` / `zlib`). Fallback: `./scripts/fetch-openssl-headers.sh`.
+**System deps:** OpenSSL (`libssl-dev` / Homebrew `openssl`, plus `pkg-config`). Fallback: `./scripts/fetch-openssl-headers.sh`.
 
 In your `lakefile.lean`:
 
@@ -154,9 +154,9 @@ require «lean-grpc» from git
   "https://github.com/RileyBetts/lean-grpc.git" @ "v1.0.0"
 ```
 
-Then `import Grpc` (and `Proto` if you use the bundled codecs). Public libs: `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc`. Linking OpenSSL (`-lssl -lcrypto`) is pulled in via the `Grpc` Lake library (not via Bytes/Hpack/H2 alone). For peer gzip against foreign stacks, set `LEAN_GRPC_ZLIB_HELPER` after `./scripts/build_native.sh`. Full packaging notes: [packaging.md](packaging.md).
+Then `import Grpc` (and `Proto` if you use the bundled codecs). Public libs: `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc`. Linking OpenSSL (`-lssl -lcrypto`) is pulled in via the `Grpc` Lake library (not via Bytes/Hpack/H2 alone). For peer gzip against foreign stacks, set `LEAN_GRPC_ZLIB_HELPER` after `./scripts/build_native.sh`. Full packaging notes: [packaging.md](packaging.md). Hosted docs: [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc).
 
-Pin a commit SHA if the `v1.0.0` tag is not yet on the remote you use.
+After [Reservoir](https://reservoir.lean-lang.org/) indexes the package you can use `require «lean-grpc»` without a git URL. Pin a commit SHA if the `v1.0.0` tag is not yet on the remote you use.
 
 ## Next steps
 
