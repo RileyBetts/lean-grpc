@@ -109,7 +109,7 @@ HTTP CONNECT proxying is out of scope (direct dial only).
 
 ## Interop coverage
 
-Official non-auth cases are exercised Lean↔Lean, Go↔Lean, and Python↔Lean (see [conformance.md](conformance.md)). Intentionally limited or skipped:
+Official non-auth cases are exercised Lean↔Lean, Go↔Lean, Python↔Lean, and Rust (tonic)↔Lean (see [conformance.md](conformance.md)). Intentionally limited or skipped:
 
 | Case | Reason |
 |---|---|

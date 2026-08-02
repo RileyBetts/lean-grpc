@@ -1,6 +1,6 @@
 # Contributing to lean-grpc
 
-Thanks for helping improve the Lean 4 gRPC stack. This document covers local setup, testing, and pull request expectations.
+Thanks for helping improve the Lean 4 gRPC stack. This document covers local setup, testing, and pull request expectations. By participating, you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Development setup
 
@@ -102,11 +102,12 @@ chmod +x scripts/security-asan.sh && ./scripts/security-asan.sh
 
 ## Documentation
 
-User docs live under [`docs/`](docs/README.md). When you add a public API or change wire behavior, update:
+User docs live under [`docs/`](docs/README.md) (source of truth). Curated pages are also published at [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc). When you add a public API or change wire behavior, update:
 
 - `docs/api-reference.md` and/or `docs/protocol-mapping.md`
 - `docs/conformance.md` scorecard / checklist
 - `README.md` only for high-level status or top-level commands
+- Matching website pages when a curated guide changed (same release window) — [docs/website-sync.md](docs/website-sync.md)
 
 ## Pull requests
 

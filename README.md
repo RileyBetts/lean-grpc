@@ -1,8 +1,14 @@
 # lean-grpc
 
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Lean](https://img.shields.io/badge/Lean-4.32-purple.svg)](lean-toolchain)
+[![Docs](https://img.shields.io/badge/docs-rileybetts.ai-0B3D2E.svg)](https://rileybetts.ai/oss/lean-grpc)
+
 General-purpose **Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
 
 Standalone Lake package (**0.5.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
+
+**Docs:** [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc) (curated) · [docs/](docs/README.md) (full in-repo index)
 
 **Public libraries:** `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`). Tests and examples are not API.
 
@@ -23,7 +29,8 @@ Then `import Grpc`. After Reservoir lists the package you can use `require «lea
 
 | Doc | Description |
 |---|---|
-| [docs/README.md](docs/README.md) | Documentation index |
+| [Hosted docs](https://rileybetts.ai/oss/lean-grpc) | Curated guides on rileybetts.ai |
+| [docs/README.md](docs/README.md) | Full documentation index (source of truth) |
 | [Getting started](docs/getting-started.md) | Typed unary helloworld, TLS, Lake dependency |
 | [Cookbooks](docs/cookbook-unary.md) | Unary · [streaming](docs/cookbook-streaming.md) · [interceptors / mTLS](docs/cookbook-interceptors.md) |
 | [Packaging](docs/packaging.md) | Lake/Reservoir layout, consumer contract, release checklist |
@@ -33,8 +40,10 @@ Then `import Grpc`. After Reservoir lists the package you can use `require «lea
 | [Conformance](docs/conformance.md) | Scorecard, interop matrix, allowlists |
 | [TLS / Envoy](docs/tls-envoy.md) | In-process OpenSSL and sidecars |
 | [CHANGELOG](CHANGELOG.md) | Version history |
+| [ROADMAP](ROADMAP.md) | v0.5.0 → v1.0.0 (proofs + hardening) |
 | [CONTRIBUTING](CONTRIBUTING.md) | Dev setup and PR expectations |
-| [SECURITY](SECURITY.md) | Vulnerability reporting |
+| [SECURITY](SECURITY.md) | Vulnerability reporting (`security@rileybetts.ai`) |
+| [Code of Conduct](CODE_OF_CONDUCT.md) | Community standards |
 
 ## Status
 

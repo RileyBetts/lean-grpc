@@ -4,17 +4,17 @@
 
 Security fixes are applied to the published tip (`main` / `development` as released). There is no long-term LTS train yet.
 
-**Supported version:** the latest **tagged** release (e.g. `v0.5.0`) once tags exist; until then, use a recent commit from `main`. Maintainers create tags manually — see [docs/packaging.md](docs/packaging.md). After the repository is public, prefer GitHub Security Advisories for private reports when enabled.
+**Supported version:** the latest **tagged** release (e.g. `v0.5.0`). Maintainers create tags manually — see [docs/packaging.md](docs/packaging.md). Prefer GitHub Security Advisories for private reports when enabled.
 
 ## Reporting a vulnerability
 
 Please **do not** open a public GitHub issue for security-sensitive reports.
 
-1. Email the maintainer listed in the repository owner profile / commit history for [RileyBetts/lean-grpc](https://github.com/RileyBetts/lean-grpc), with subject prefix `[SECURITY] lean-grpc`.
+1. Email **security@rileybetts.ai** with subject prefix `[SECURITY] lean-grpc`.
 2. Include: affected revision, impact, reproduction steps, and any proposed fix.
 3. Allow a reasonable window for a patch or advisory before public disclosure.
 
-If private contact fails, open a GitHub Security Advisory on the repository (if enabled) or a minimal private maintainer contact request without exploit details.
+You may also open a private [GitHub Security Advisory](https://github.com/RileyBetts/lean-grpc/security/advisories) on the repository when that channel is enabled.
 
 ## Security-relevant surfaces
 
@@ -32,7 +32,7 @@ If private contact fails, open a GitHub Security Advisory on the repository (if 
 | Codegen plugin | Hostile `.proto` / plugin stdin names are allowlisted (`[A-Za-z_][A-Za-z0-9_]*`) |
 | Native FFI | Report memory bugs with ASAN notes; CI runs `scripts/security-asan.sh` |
 
-Full audit + remediation status: [docs/security-review-2026-08.md](docs/security-review-2026-08.md).
+Full audit + remediation status: [docs/security-review-2026-08.md](docs/security-review-2026-08.md). Hosted security summary: [rileybetts.ai/oss/lean-grpc/security](https://rileybetts.ai/oss/lean-grpc/security).
 
 ## Out of scope / known limitations
 
@@ -40,6 +40,7 @@ Full audit + remediation status: [docs/security-review-2026-08.md](docs/security
 - HTTP CONNECT proxying is not implemented.
 - Huffman decode-trie rewrite and full xDS bootstrap JSON rewrite remain follow-ups (mitigated by header-list caps / existing scrape).
 - This is a young stack: prefer defense in depth (network policy, sidecar TLS, authn/z at the app layer) for high-risk deployments.
+- Formal Lean proofs of the wire stack are not yet present (see [ROADMAP.md](ROADMAP.md)); OpenSSL and zlib remain a trusted TCB.
 
 ## Acknowledgments
 
