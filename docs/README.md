@@ -21,7 +21,7 @@ User and contributor docs for the Lean 4 gRPC stack.
 | [Formal proofs](proofs.md) | Compile-time `Proofs` library for pure codecs / maps |
 | [TLS / Envoy](tls-envoy.md) | In-process OpenSSL and optional sidecars |
 | [CHANGELOG](../CHANGELOG.md) | Package version history |
-| [ROADMAP](../ROADMAP.md) | v0.5.0 → v1.0.0 (Lean proofs + hardening) |
+| [ROADMAP](../ROADMAP.md) | What v1.0.0 shipped vs open proof/hardening follow-ups |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Dev setup, tests, PR expectations |
 | [SECURITY](../SECURITY.md) | Vulnerability reporting |
 | [Code of Conduct](../CODE_OF_CONDUCT.md) | Community standards |

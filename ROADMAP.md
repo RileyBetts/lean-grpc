@@ -1,19 +1,21 @@
 # Roadmap
 
-lean-grpc **v0.5.0** (tagged on `main`) is the first public packaging baseline: an interop-tested Lean 4 gRPC stack (HTTP/2 + HPACK + protobuf framing) with CI hard gates. It is **not** a machine-checked protocol proof.
+lean-grpc **v1.0.0** is the current package tip (Lake / `Grpc.version`, git tag `v1.0.0`): an interop-tested Lean 4 gRPC stack with a CI-gated **`Proofs`** library for selected pure codecs. It is **not** a machine-checked end-to-end PROTOCOL-HTTP2 / TLS / session proof, and it does **not** yet meet every item that earlier drafts listed under “v1.0.0 complete.”
 
-This roadmap describes the path to **v1.0.0**, centered on Lean mathematical proofs for critical wire components, plus the hardening and API stability needed to call the release “production-ready” without overstating verification claims.
+This document records what shipped, what is still open, and the next proof/hardening tranches.
 
-Related: [CHANGELOG.md](CHANGELOG.md), [docs/conformance.md](docs/conformance.md), [docs/security-review-2026-08.md](docs/security-review-2026-08.md), [docs/packaging.md](docs/packaging.md), [SECURITY.md](SECURITY.md).
+Related: [CHANGELOG.md](CHANGELOG.md), [docs/proofs.md](docs/proofs.md), [docs/conformance.md](docs/conformance.md), [docs/security-review-2026-08.md](docs/security-review-2026-08.md), [docs/packaging.md](docs/packaging.md), [SECURITY.md](SECURITY.md).
 
 ## Guiding principles
 
 1. **Prove the pure layers first.** Codecs and connection-state transitions before IO / `Std.Async` / FFI.
-2. **Never claim “proved TLS/gRPC end-to-end.”** OpenSSL and zlib remain a trusted TCB; proofs cover the Lean wire model that sits above them.
+2. **Never claim “proved TLS/gRPC end-to-end.”** OpenSSL and zlib helpers remain a trusted TCB; proofs cover the Lean wire model that sits above them.
 3. **Keep interop green.** Proof work must not regress h2spec, Go/Python/Rust interop, or stress/framing gates.
-4. **Freeze the consumer API at v1.0.0.** Public libraries stay `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`).
+4. **Keep the consumer API stable.** Public libraries stay `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc` (umbrella `LeanGrpc`). `Proofs` is CI/maintainer-only, not consumer API.
 
-## v0.5.0 — shipped baseline
+## Shipped — v0.5.0
+
+First public packaging baseline (interop + Lake/Reservoir layout). Formal Lean proofs: none.
 
 | Area | Status |
 |---|---|
@@ -22,50 +24,59 @@ Related: [CHANGELOG.md](CHANGELOG.md), [docs/conformance.md](docs/conformance.md
 | TLS (in-process OpenSSL) + compression caps | Security-hardened; ASAN / `securityTests` gated |
 | Dial / LB / retry, health, reflection, channelz | Present; ops demos gated |
 | ADC / xDS ADS | Mock / FakeAds CI; live Google paths allowlisted |
-| Formal Lean proofs | None yet |
 
-**Explicitly out of v0.5.0:** ALTS / GCE channel credentials, HTTP CONNECT proxying, full `cacheable_unary` proxy infrastructure, formal verification.
+## Shipped — v1.0.0 (honest scope)
 
-## Toward v1.0.0
+Product/packaging release with **selected** compile-time proofs. See [docs/proofs.md](docs/proofs.md).
 
-Work is grouped so each tranche can ship as a minor release (`0.6`, `0.7`, …) without waiting for the full proof stack.
+| Included | Not included (still follow-up) |
+|---|---|
+| Interop bar maintained (h2spec, Go/Python/Rust, stress/framing) | Full PROTOCOL-HTTP2 / gRPC / TLS stack proved |
+| `Proofs/` Lake lib + CI (`lake build Proofs`), zero `sorry` | `H2.ConnState` transition lemmas |
+| ∀-style BE int / status-code / identity framing lemmas | General ∀ frame / message / varint roundtrips (many fixtures only) |
+| Kernel-checked fixtures: frames, HPACK ints/headers, metadata, varints | Huffman decode padding/EOS lemmas; Huffman decode-trie rewrite |
+| Provenance / NOTICE for interop protos | Fuzz seed corpora in CI |
+| Allowlists reaffirmed (ALTS, live ADC, CONNECT) | Documented API stability contract (semver freeze note) |
+
+**Explicit non-goals (unchanged):** ALTS / GCE channel credentials, HTTP CONNECT proxying, full `cacheable_unary` proxy infrastructure, end-to-end session proofs.
+
+## Toward v1.1.x / later
+
+Work is grouped so each tranche can ship as a minor release without waiting for a full ConnState + Huffman proof stack.
 
 ### A — Proof foundations (critical path)
 
-Machine-checked properties for the layers that define wire correctness. Prefer `theorem` / `lemma` with **zero `sorry`** in the CI-gated proof modules.
+Prefer `theorem` / `lemma` with **zero `sorry`** in CI-gated `Proofs/` modules.
 
-| Priority | Target | Example properties |
+| Priority | Target | Status / next step |
 |---|---|---|
-| P0 | `Bytes` / big-endian codecs | `decode ∘ encode = id` on well-formed inputs; truncated input ⇒ error |
-| P0 | Protobuf wire (`Proto.Wire`) | Field parse roundtrip; reject illegal wire types (6/7); length-delimited bounds |
-| P0 | HPACK integer coding + string literals | Integer encode/decode inverse; Huffman decode rejects padding/EOS abuse (pairs with trie rewrite) |
-| P1 | HTTP/2 frames (`H2.Frame`) | Length/type/flags consistency; pad truncation ⇒ connection/stream error as specified |
-| P1 | `H2.ConnState` transitions | CONTINUATION sequencing; flow-control windows never go negative after accept; oversized header list ⇒ `ENHANCE_YOUR_CALM`; GOAWAY stops new streams |
-| P2 | gRPC message framing + status mapping | 5-byte prefix length; trailers-only / RST→`Status` mapping lemmas against a small abstract model |
+| P0 | `Bytes` / big-endian codecs | **Done** for u16/u24/u32 encode↔decode |
+| P0 | Protobuf wire (`Proto.Wire`) | Partial — extend beyond varint `<128` + fixtures; field roundtrip; illegal wire types as lemmas |
+| P0 | HPACK integer coding + string literals | Partial fixtures — add Huffman padding/EOS reject lemmas (pairs with trie rewrite) |
+| P1 | HTTP/2 frames (`H2.Frame`) | Partial fixtures — general encode↔decode under `payload.size < 2^24`; pad truncation ⇒ connection/stream error |
+| P1 | `H2.ConnState` transitions | **Open** — CONTINUATION sequencing; non-negative windows after accept; oversized header list ⇒ `ENHANCE_YOUR_CALM`; GOAWAY stops new streams |
+| P2 | gRPC framing + status mapping | Partial identity framing / status maps — trailers-only / RST→`Status` against a small abstract model |
 
-**Non-goals for v1.0.0 proofs:** full async scheduler correctness, OpenSSL handshake, xDS control-plane completeness, Huffman *encode* optimality.
-
-Suggested layout (to be introduced when proofs land): `Proofs/` (or per-layer `*.Proofs.lean`) with a Lake target such as `proofs` hard-gated in CI.
+**Non-goals for the next proof tranche:** full async scheduler correctness, OpenSSL handshake, xDS control-plane completeness, Huffman *encode* optimality.
 
 ### B — Security & parser hardening (pairs with proofs)
 
-Close remaining audit follow-ups so v1.0.0 is not “proved but soft”:
+Close remaining audit follow-ups so later minors are not “proved but soft”:
 
-- Huffman **decode-trie** rewrite ([LGSEC-2026-23](docs/security-review-2026-08.md)) — mitigates CPU DoS; enables cleaner Huffman lemmas
-- xDS bootstrap **JSON rewrite** ([LGSEC-2026-32](docs/security-review-2026-08.md))
-- Minimal **fuzz corpora** for frames / HPACK / protobuf / zlib (`Tests/Fuzz/`) — offline or soft CI first
-- `pip --require-hashes` (and keep Go/action pins current)
-- Post-hardening security re-audit note in `docs/`
+- Huffman **decode-trie** rewrite ([LGSEC-2026-23](docs/security-review-2026-08.md)) — still mitigated by header-list caps; rewrite deferred
+- xDS bootstrap **JSON rewrite** ([LGSEC-2026-32](docs/security-review-2026-08.md)) — still **Open**
+- Minimal **fuzz corpora** for frames / HPACK / protobuf / zlib (`Tests/Fuzz/`) — README stub only; offline or soft CI first
+- Keep Go/action pins current; prefer `pip --require-hashes` where Python peers are installed
+- Post-hardening security re-audit note in `docs/` when trie/bootstrap land
 
 ### C — Product / API readiness
 
-- Document **API stability** contract for `Bytes` / `Hpack` / `H2` / `Proto` / `Grpc`
-- README / SECURITY honesty: “executable + interop CI + *selected* Lean proofs; FFI trusted”
-- Close or reaffirm allowlists (ALTS, live ADC, CONNECT) — do not block v1.0.0 on ALTS
-- Optional: consumer smoke (`require @ "v1.0.0"` helloworld) in release checklist
-- Reservoir indexing and packaging polish as needed ([docs/packaging.md](docs/packaging.md))
+- Document **API stability** contract for `Bytes` / `Hpack` / `H2` / `Proto` / `Grpc` (what may break in 1.x vs 2.0)
+- Keep README / SECURITY honesty: “executable + interop CI + *selected* Lean proofs; FFI trusted”
+- Reservoir indexing polish ([docs/packaging.md](docs/packaging.md); hosted docs at [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc))
+- Allowlists remain unless separately delivered (ALTS, live ADC, CONNECT)
 
-### D — Nice-to-have (not v1.0.0 blockers)
+### D — Nice-to-have (not blockers)
 
 - Deeper grpclb / hedge race polish
 - Python/Rust stress demos (parity with Go stress)
@@ -76,26 +87,27 @@ Close remaining audit follow-ups so v1.0.0 is not “proved but soft”:
 ## Milestone sketch
 
 ```text
-v0.5.0 ──► v0.6.x          ──► v0.7.x              ──► v1.0.0
- shipped    Bytes+Proto       H2 ConnState +         Proof CI green,
-            wire proofs +     frame lemmas +         API freeze,
-            Huffman trie      fuzz seed corpora      security follow-ups
-            / bootstrap JSON                         closed or documented
+v0.5.0 ──► v1.0.0              ──► v1.1.x              ──► v1.2.x
+ shipped     interop +           ConnState +            Huffman trie /
+             selected Proofs     general frame/msg      bootstrap JSON /
+             (CI) + provenance   roundtrips             fuzz seeds
+                                 (fixtures → ∀)
 ```
 
 Dates are intentionally omitted; order matters more than calendar.
 
-## What v1.0.0 will mean
+## What versions mean
 
-| Claim | In scope for v1.0.0 |
-|---|---|
-| Interop-tested general-purpose gRPC over h2c/TLS | Yes (maintain v0.5.0 CI bar) |
-| Selected critical codecs / H2 state properties machine-checked in Lean | Yes |
-| Full PROTOCOL-HTTP2 / gRPC / TLS stack proved | **No** |
-| ALTS / live Google control plane | **No** (remain allowlisted unless separately delivered) |
+| Claim | v1.0.0 | Later 1.x target |
+|---|---|---|
+| Interop-tested general-purpose gRPC over h2c/TLS | **Yes** | Maintain |
+| Selected critical pure codecs machine-checked in Lean | **Yes** (partial; see [docs/proofs.md](docs/proofs.md)) | Broaden ∀ coverage |
+| `H2.ConnState` properties machine-checked | **No** | Yes (P1) |
+| Full PROTOCOL-HTTP2 / gRPC / TLS stack proved | **No** | **No** (non-goal) |
+| ALTS / live Google control plane | **No** (allowlisted) | Unless separately delivered |
 
 ## How to contribute
 
-- Proof PRs: small lemmas, no `sorry` in gated targets, preserve interop CI.
+- Proof PRs: small lemmas, no `sorry` in gated targets, preserve interop CI; extend [docs/proofs.md](docs/proofs.md) when coverage grows.
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 - Update this roadmap when a tranche lands or a non-goal changes.

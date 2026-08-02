@@ -42,7 +42,7 @@ Then `import Grpc`. After Reservoir lists the package you can use `require «lea
 | [Formal proofs](docs/proofs.md) | Compile-time theorems for pure codecs |
 | [TLS / Envoy](docs/tls-envoy.md) | In-process OpenSSL and sidecars |
 | [CHANGELOG](CHANGELOG.md) | Version history |
-| [ROADMAP](ROADMAP.md) | v0.5.0 → v1.0.0 (proofs + hardening) |
+| [ROADMAP](ROADMAP.md) | What v1.0.0 shipped vs open proof/hardening follow-ups |
 | [CONTRIBUTING](CONTRIBUTING.md) | Dev setup and PR expectations |
 | [SECURITY](SECURITY.md) | Vulnerability reporting (`security@rileybetts.ai`) |
 | [Code of Conduct](CODE_OF_CONDUCT.md) | Community standards |
