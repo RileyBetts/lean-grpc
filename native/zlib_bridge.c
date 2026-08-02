@@ -1,3 +1,4 @@
+/* Copyright © 2026, Riley Betts Ltd (rileybetts.ai) */
 /* Thin zlib FFI for peer-compatible gzip (deflate/inflate). */
 #include <stdint.h>
 #include <stdlib.h>

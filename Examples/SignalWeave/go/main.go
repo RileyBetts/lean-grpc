@@ -1,3 +1,4 @@
+// Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 // SignalWeave: Go client → Lean lean-grpc server stress demo.
 package main
 

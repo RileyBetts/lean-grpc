@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 """Minimal Python gRPC interop server for Lean client → Python tests."""
 from __future__ import annotations
 

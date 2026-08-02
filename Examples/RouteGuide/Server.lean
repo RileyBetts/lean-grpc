@@ -1,26 +1,25 @@
 /-
-Copyright (c) 2026 RileyBetts. All rights reserved.
+Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Grpc
 import Proto
 
-/-- Demo RouteGuide server using public streaming registration APIs. -/
+/-- Demo RouteGuide server using typed streaming registration helpers. -/
 def main : IO Unit := do
   let port := ((← IO.getEnv "GRPC_PORT").getD "50052").toNat?.getD 50052 |>.toUInt16
   let mut s := Grpc.Server.empty
-  s := Grpc.Server.register s "routeguide.RouteGuide" "GetFeature" fun req => do
-    let _ ← IO.ofExcept (Proto.Point.decode req)
-    let reply := Proto.Feature.encode { name := "Lean Peak", location := { latitude := 1, longitude := 2 } }
-    return (reply, Grpc.Status.ok)
-  s := Grpc.Server.registerServerStream s "routeguide.RouteGuide" "ListFeatures" fun _ => do
-    let mut msgs : Array ByteArray := #[]
-    for name in ["Alpha", "Beta", "Gamma"] do
-      msgs := msgs.push (Proto.Feature.encode { name })
-    return (msgs, Grpc.Status.ok)
-  s := Grpc.Server.registerClientStream s "routeguide.RouteGuide" "RecordRoute" fun reqs => do
-    let summary := Proto.RouteSummary.encode { pointCount := reqs.size.toUInt32 }
-    return (summary, Grpc.Status.ok)
-  s := Grpc.Server.registerBidi s "routeguide.RouteGuide" "RouteChat" fun reqs => do
-    return (reqs, Grpc.Status.ok)  -- echo
+  s := Grpc.Server.registerTyped s "routeguide.RouteGuide" "GetFeature"
+    Proto.Point.decode Proto.Feature.encode fun _ => do
+      pure ({ name := "Lean Peak", location := { latitude := 1, longitude := 2 } }, Grpc.Status.ok)
+  s := Grpc.Server.registerServerStreamTyped s "routeguide.RouteGuide" "ListFeatures"
+    Proto.Rectangle.decode Proto.Feature.encode fun _ => do
+      let feats : Array Proto.Feature := #[{ name := "Alpha" }, { name := "Beta" }, { name := "Gamma" }]
+      pure (feats, Grpc.Status.ok)
+  s := Grpc.Server.registerClientStreamTyped s "routeguide.RouteGuide" "RecordRoute"
+    Proto.Point.decode Proto.RouteSummary.encode fun reqs => do
+      pure ({ pointCount := reqs.size.toUInt32 }, Grpc.Status.ok)
+  s := Grpc.Server.registerBidiTyped s "routeguide.RouteGuide" "RouteChat"
+    Proto.RouteNote.decode Proto.RouteNote.encode fun reqs => do
+      pure (reqs, Grpc.Status.ok)
   Grpc.Server.serveH2c s { host := "127.0.0.1", port }

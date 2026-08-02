@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Fetch/generate OpenSSL headers when libssl-dev is unavailable (no sudo).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

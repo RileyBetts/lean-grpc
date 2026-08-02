@@ -1,5 +1,5 @@
 /-
-Copyright (c) 2026 RileyBetts. All rights reserved.
+Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Lake
@@ -7,10 +7,12 @@ open Lake DSL
 open System
 
 package «lean-grpc» where
-  version := v!"0.1.0"
+  version := v!"0.5.0"
   keywords := #["grpc", "http2", "hpack", "protobuf", "networking"]
   description := "Pure Lean 4 gRPC stack (HTTP/2 + HPACK + gRPC) on Std.Async"
-  moreLinkArgs := #["-lssl", "-lcrypto", "-lz"]
+  -- OpenSSL link flags live on `Grpc` only (not Bytes/Hpack/H2), so non-gRPC
+  -- targets need not pull `-lssl`. Peer gzip uses process helpers / stored
+  -- deflate — `zlib_bridge.o` is unused by Lean FFI and is not linked here.
 
 target tls_ffi.o pkg : FilePath := do
   let oFile := pkg.buildDir / "native" / "tls_ffi.o"
@@ -27,18 +29,14 @@ target tls_ffi.o pkg : FilePath := do
       incArgs := incArgs.push "-I" |>.push localInc.toString
   buildO oFile srcJob #[] incArgs
 
-target zlib_bridge.o pkg : FilePath := do
-  let oFile := pkg.buildDir / "native" / "zlib_bridge.o"
-  let srcJob ← inputTextFile <| pkg.dir / "native" / "zlib_bridge.c"
-  buildO oFile srcJob #[] #["-fPIC", "-O2"]
-
 lean_lib Bytes
 lean_lib Hpack
 lean_lib H2
 lean_lib Proto
-/-- Native TLS/zlib objects linked once via Grpc dependents. -/
+/-- gRPC app surface. Links in-process OpenSSL (`tls_ffi`) for TLS/mTLS/ADC. -/
 lean_lib Grpc where
-  moreLinkObjs := #[tls_ffi.o, zlib_bridge.o]
+  moreLinkObjs := #[tls_ffi.o]
+  moreLinkArgs := #["-lssl", "-lcrypto"]
 
 @[default_target]
 lean_lib LeanGrpc
@@ -66,6 +64,10 @@ lean_exe tlsLoopback where
 
 lean_exe grpcTests where
   root := `Tests.GrpcMain
+
+/-- Typed helloworld stubs (`./scripts/gen-helloworld.sh`). -/
+lean_lib Helloworld where
+  roots := #[`Examples.Helloworld.Generated]
 
 lean_exe helloworldServer where
   root := `Examples.Helloworld.Server

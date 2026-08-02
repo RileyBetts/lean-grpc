@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Run full h2spec against the Lean h2c fixture (hard gate).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

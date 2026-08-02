@@ -1,5 +1,5 @@
 /-
-Copyright (c) 2026 RileyBetts. All rights reserved.
+Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import H2
@@ -320,6 +320,41 @@ def openStream (ch : Channel) (service method : String)
       Metadata.grpcAcceptEncoding "identity,gzip,deflate,snappy"
     ] ++ Metadata.toFields metadata
   Stream.openCall c headers
+
+/-- Server-streaming convenience: send one request, collect all responses + status. -/
+def serverStream (ch : Channel) (service method : String) (req : ByteArray)
+    (metadata : Metadata := {}) : IO (Array ByteArray × Status) := do
+  let stream ← openStream ch service method metadata
+  Stream.StreamWriter.send stream.writer req
+  Stream.StreamWriter.halfClose stream.writer
+  let msgs ← Stream.StreamReader.recvAll stream.reader
+  let st ← Stream.StreamReader.status stream.reader
+  return (msgs, st)
+
+/-- Client-streaming convenience: send all requests, half-close, read one response. -/
+def clientStream (ch : Channel) (service method : String) (reqs : Array ByteArray)
+    (metadata : Metadata := {}) : IO CallResult := do
+  let stream ← openStream ch service method metadata
+  Stream.StreamWriter.sendAll stream.writer reqs
+  let msg? ← Stream.StreamReader.recv? stream.reader
+  let st ← Stream.StreamReader.status stream.reader
+  let headers := (← stream.reader.headers.get).getD #[]
+  let trailers := (← stream.reader.trailers.get).getD #[]
+  return {
+    status := st
+    message := msg?.getD ByteArray.empty
+    headers
+    trailers
+  }
+
+/-- Bidi convenience (batch): send all requests, half-close, collect all responses. -/
+def bidiStream (ch : Channel) (service method : String) (reqs : Array ByteArray)
+    (metadata : Metadata := {}) : IO (Array ByteArray × Status) := do
+  let stream ← openStream ch service method metadata
+  Stream.StreamWriter.sendAll stream.writer reqs
+  let msgs ← Stream.StreamReader.recvAll stream.reader
+  let st ← Stream.StreamReader.status stream.reader
+  return (msgs, st)
 
 /-- Send GOAWAY and drop the pooled connection (graceful drain from client side). -/
 def goAway (ch : Channel) : IO Unit := do

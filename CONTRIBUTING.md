@@ -6,7 +6,7 @@ Thanks for helping improve the Lean 4 gRPC stack. This document covers local set
 
 1. Install [elan](https://github.com/leanprover/elan) / Lean 4 matching `lean-toolchain` (4.32.x).
 2. Install OpenSSL headers (`libssl-dev` / `pkg-config`) or run `./scripts/fetch-openssl-headers.sh`.
-3. Optional: Go 1.24+ and Python 3.12+ for interop matrices; `zlib1g-dev` for native gzip helper.
+3. Optional: Go 1.24+, Python 3.12+, and Rust (`cargo`) for interop matrices; `zlib1g-dev` for the optional native gzip helper (`LEAN_GRPC_ZLIB_HELPER`).
 
 ```bash
 lake build
@@ -50,6 +50,8 @@ lake build interopServer interopClient
 GRPC_PORT=10001 ./scripts/interop-go-lean.sh
 ./scripts/run-python-to-lean.sh
 GRPC_PORT=10001 ./scripts/interop-lean-python.sh
+./scripts/run-rust-to-lean.sh
+GRPC_PORT=10001 ./scripts/interop-lean-rust.sh
 ```
 
 **When touching TLS / ADC / xDS / codegen / soak:**

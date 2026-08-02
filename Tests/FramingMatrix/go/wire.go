@@ -1,3 +1,4 @@
+// Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 package main
 
 import "fmt"

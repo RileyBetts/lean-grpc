@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # rpc_soak / channel_soak smoke: runs benchSoak against a local helloworldServer with both
 # calling conventions:
 #   1. Legacy positional iteration count (back-compat with the original `benchSoak host port N`).

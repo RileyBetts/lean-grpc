@@ -1,3 +1,4 @@
+/* Copyright © 2026, Riley Betts Ltd (rileybetts.ai) */
 /*
  * Minimal TLS terminator: accept TLS+ALPN h2, forward bytes to backend h2c.
  * Usage: tls_proxy <listen_port> <backend_port> <cert.pem> <key.pem>

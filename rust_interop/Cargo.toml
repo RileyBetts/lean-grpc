@@ -1,0 +1,33 @@
+[package]
+name = "rust_interop"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "Rust gRPC interop peer (tonic) for lean-grpc official TestService matrix"
+
+[[bin]]
+name = "rust_interop_client"
+path = "src/bin/client.rs"
+
+[[bin]]
+name = "rust_interop_server"
+path = "src/bin/server.rs"
+
+[dependencies]
+async-stream = "0.3"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+http = "1"
+http-body = "1"
+pin-project = "1"
+prost = "0.13"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "sync", "signal"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tonic = { version = "0.12", features = ["gzip", "transport"] }
+tower = "0.4"
+
+[build-dependencies]
+protoc-bin-vendored = "3"
+tonic-build = "0.12"

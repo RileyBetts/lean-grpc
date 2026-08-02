@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Generate a short-lived test CA + server cert for TLS interop.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

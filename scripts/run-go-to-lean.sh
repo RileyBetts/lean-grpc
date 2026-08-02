@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # Official grpc-go interop client cases supported by the stock `client` binary.

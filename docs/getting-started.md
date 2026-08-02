@@ -1,8 +1,10 @@
 # Getting started
 
-This guide gets a Lean 4 unary gRPC server and client running on h2c, then shows TLS dial and Lake dependency usage.
+This guide gets a Lean 4 unary gRPC server and client running on h2c with **typed generated stubs**, then shows TLS dial and Lake dependency usage.
 
-**Requirements:** Lean 4.32+ (see `lean-toolchain`), OpenSSL headers for TLS (`libssl-dev` or `./scripts/fetch-openssl-headers.sh`), optional `zlib` for peer gzip.
+**Requirements:** Lean 4.32+ (see `lean-toolchain`), OpenSSL headers for the `Grpc` library (`libssl-dev` or `./scripts/fetch-openssl-headers.sh`). Peer gzip optionally uses a zlib helper (`./scripts/build_native.sh`) or system `gzip`.
+
+Package version: **0.5.0** (`lakefile.lean` / `Grpc.version`).
 
 ## Build the repo
 
@@ -14,51 +16,50 @@ lake build helloworldServer helloworldClient grpcTests
 ./.lake/build/bin/grpcTests
 ```
 
-Native helpers (peer gzip / TLS FFI objects):
+Native OpenSSL FFI object (linked by `Grpc`):
 
 ```bash
-./scripts/build_native.sh
+./scripts/build_native.sh   # also builds optional zlib_helper for peer gzip
 ```
 
-## Run helloworld
+## Run helloworld (typed stubs)
 
 ```bash
+./scripts/gen-helloworld.sh   # regenerates Examples/Helloworld/Generated.lean
 lake build helloworldServer helloworldClient
 ./.lake/build/bin/helloworldServer &
 ./.lake/build/bin/helloworldClient 127.0.0.1 50051 World
 # → Hello, World
 ```
 
-### Minimal server
+### Minimal typed server
 
 ```lean
 import Grpc
-import Proto
+import Examples.Helloworld.Generated
 
 def main : IO Unit := do
   let mut s := Grpc.Server.empty
-  s := Grpc.Server.register s "helloworld.Greeter" "SayHello" fun reqBytes => do
-    let req ← IO.ofExcept (Proto.HelloRequest.decode reqBytes)
-    let reply : Proto.HelloReply := { message := s!"Hello, {req.name}" }
-    return (Proto.HelloReply.encode reply, Grpc.Status.ok)
+  s := helloworld.registerGreeterSayHello s fun req => do
+    pure ({ message := s!"Hello, {req.name}" }, Grpc.Status.ok)
   Grpc.Server.serveH2c s { host := "127.0.0.1", port := 50051 }
 ```
 
-### Minimal client
+### Minimal typed client
 
 ```lean
 import Grpc
-import Proto
+import Examples.Helloworld.Generated
 
 def main : IO Unit := do
   let ch ← Grpc.Channel.connectH2c "127.0.0.1" 50051
-  let res ← Grpc.Channel.unary ch "helloworld.Greeter" "SayHello"
-    (Proto.HelloRequest.encode { name := "Lean" })
-  let reply ← IO.ofExcept (Proto.HelloReply.decode res.message)
-  IO.println reply.message
+  let stub : helloworld.GreeterStub := { channel := ch }
+  match ← stub.SayHello { name := "Lean" } with
+  | .ok reply => IO.println reply.message
+  | .error e => IO.eprintln e
 ```
 
-Handlers receive and return **protobuf bytes**. Use `Proto.*` codecs shipped with the repo, or generate stubs (see [Codegen](#codegen)).
+Raw `ByteArray` handlers (`Grpc.Server.register` + manual encode/decode) remain available; prefer generated stubs for new services. See [cookbook-unary.md](cookbook-unary.md).
 
 ## Dial with TLS
 
@@ -71,7 +72,7 @@ let ch ← Grpc.Channel.dial "api.example.com:443" {
 }
 ```
 
-mTLS: set `certPath` / `keyPath` on the client config; on the server set `clientCaPath` and use `Grpc.Server.serveTls`. Details: [tls-envoy.md](tls-envoy.md).
+mTLS: set `certPath` / `keyPath` on the client config; on the server set `clientCaPath` and use `Grpc.Server.serveTls`. Details: [tls-envoy.md](tls-envoy.md), [cookbook-interceptors.md](cookbook-interceptors.md).
 
 ## Targets and service config
 
@@ -88,18 +89,22 @@ Override resolved addresses in tests with `LEAN_GRPC_RESOLVE_ADDRS=127.0.0.1:500
 
 ## Streaming
 
-Register streaming handlers on the server:
+Prefer the batch helpers, or `openStream` for interactive duplex:
 
 ```lean
-s := Grpc.Server.registerServerStream s "svc" "ServerStream" fun req => do
-  pure (#[resp1, resp2], Grpc.Status.ok)
-s := Grpc.Server.registerClientStream s "svc" "ClientStream" fun msgs => do
-  pure (aggregated, Grpc.Status.ok)
-s := Grpc.Server.registerBidi s "svc" "Bidi" fun msgs => do
-  pure (echo, Grpc.Status.ok)
+let (msgs, st) ← Grpc.Channel.serverStream ch "svc" "ServerStream" req
+let res ← Grpc.Channel.clientStream ch "svc" "ClientStream" reqs
+let (echo, st) ← Grpc.Channel.bidiStream ch "svc" "Bidi" reqs
 ```
 
-On the client, use `Grpc.Channel.openStream` for duplex, or the interop client cases in `Tests/Interop/Client.lean` as examples.
+Server side:
+
+```lean
+s := Grpc.Server.registerServerStreamTyped s "svc" "ServerStream"
+  Req.decode Resp.encode fun req => pure (#[resp1, resp2], Grpc.Status.ok)
+```
+
+Full walkthrough: [cookbook-streaming.md](cookbook-streaming.md). Example: `Examples/RouteGuide/`.
 
 ## Metadata, deadlines, compression
 
@@ -114,15 +119,21 @@ Timeout strings follow gRPC (`H`/`M`/`S`/`m`/`u`/`n`). Compression algorithms: `
 
 ## Codegen
 
-**Text path (Lake smoke):**
+**Descriptor path (typed messages + stubs — preferred):**
+
+```bash
+./scripts/gen-helloworld.sh
+# or: ./scripts/run-codegen-fixture.sh
+```
+
+**Text path (Lake smoke; ByteArray placeholders only):**
 
 ```bash
 LEAN_GRPC_OUT=/tmp/gen LEAN_GRPC_PROTO=examples/helloworld.proto \
   ./.lake/build/bin/protoc-gen-lean4-grpc
-# writes /tmp/gen/Generated.lean (ByteArray-typed stubs)
 ```
 
-**Real protoc plugin path:**
+**Real protoc plugin:**
 
 ```bash
 lake build protocGenLean4Grpc
@@ -130,7 +141,7 @@ protoc --plugin=protoc-gen-lean4-grpc=./.lake/build/bin/protoc-gen-lean4-grpc \
   --lean4_out=. your.proto
 ```
 
-Without `protoc` installed, `./scripts/run-codegen-fixture.sh` exercises the descriptor decode path.
+Current descriptor-codegen limits: nested messages / `repeated` / `oneof` / maps are incomplete — RouteGuide still uses hand-written `Proto.RouteGuide` codecs. See [api-reference.md](api-reference.md).
 
 ## Depend from another Lake project
 
@@ -141,12 +152,17 @@ require «lean-grpc» from git
   "https://github.com/RileyBetts/lean-grpc.git" @ "v0.5.0"  -- or a commit/branch
 ```
 
-Then `import Grpc` (and `Proto` if you use the bundled codecs). Link needs OpenSSL (`-lssl -lcrypto`) and optionally zlib — see this package’s `moreLinkArgs`.
+Then `import Grpc`. Linking OpenSSL (`-lssl -lcrypto`) is pulled in via the `Grpc` Lake library (not via Bytes/Hpack/H2 alone). For peer gzip against foreign stacks, set `LEAN_GRPC_ZLIB_HELPER` after `./scripts/build_native.sh`.
+
+Pin a commit SHA if the `v0.5.0` tag is not yet on the remote you use.
 
 ## Next steps
 
+- [Cookbook: typed unary](cookbook-unary.md)
+- [Cookbook: streaming](cookbook-streaming.md)
+- [Cookbook: interceptors / auth / mTLS](cookbook-interceptors.md)
 - [Architecture](architecture.md) — how the stack layers
 - [API reference](api-reference.md) — module catalogue
 - [Conformance](conformance.md) — what is tested vs allowlisted
 - Examples: `Examples/Helloworld`, `Examples/RouteGuide`
-- Interop: `./scripts/run-python-to-lean.sh`, `./scripts/run-go-to-lean.sh`
+- Interop: `./scripts/run-python-to-lean.sh`, `./scripts/run-go-to-lean.sh`, `./scripts/run-rust-to-lean.sh`

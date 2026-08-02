@@ -1,3 +1,4 @@
+// Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 // Gzip-enabled gRPC interop TestService server for Lean client_compressed_* cases.
 // The stock `go install .../interop/server` binary does not register the gzip codec.
 package main

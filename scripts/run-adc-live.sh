@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Live Google Application Default Credentials (ADC) check — MANUAL / NIGHTLY ONLY.
 #
 # Unlike `scripts/run-adc-smoke.sh` (mocked metadata/token server, safe for regular CI),

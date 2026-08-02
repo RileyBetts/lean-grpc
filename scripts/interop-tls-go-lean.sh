@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # In-process TLS+ALPN: Lean client → Go TLS server (no LEAN_GRPC_TLS_PROXY).
 # Also keeps optional proxy smoke when tls_proxy is built.
 set -euo pipefail

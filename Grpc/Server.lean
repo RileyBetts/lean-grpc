@@ -1,5 +1,5 @@
 /-
-Copyright (c) 2026 RileyBetts. All rights reserved.
+Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Bytes.Slice
@@ -50,6 +50,54 @@ def registerClientStream (s : Server) (service method : String) (h : Stream.Clie
 
 def registerBidi (s : Server) (service method : String) (h : Stream.BidiStreamHandler) : Server :=
   { s with methods := s.methods.push ⟨service, method, .bidi h⟩ }
+
+/-- Typed unary register: decode request, run handler, encode response. -/
+def registerTyped (s : Server) (service method : String)
+    (decode : ByteArray → Except String α) (encode : β → ByteArray)
+    (h : α → IO (β × Status)) : Server :=
+  register s service method fun reqBytes => do
+    match decode reqBytes with
+    | .error e => return (ByteArray.empty, Status.invalidArgument e)
+    | .ok req =>
+      let (resp, st) ← h req
+      return (encode resp, st)
+
+/-- Typed server-streaming register (still batch: one request → array of responses). -/
+def registerServerStreamTyped (s : Server) (service method : String)
+    (decode : ByteArray → Except String α) (encode : β → ByteArray)
+    (h : α → IO (Array β × Status)) : Server :=
+  registerServerStream s service method fun reqBytes => do
+    match decode reqBytes with
+    | .error e => return (#[], Status.invalidArgument e)
+    | .ok req =>
+      let (resps, st) ← h req
+      return (resps.map encode, st)
+
+/-- Typed client-streaming register (batch: array of requests → one response). -/
+def registerClientStreamTyped (s : Server) (service method : String)
+    (decode : ByteArray → Except String α) (encode : β → ByteArray)
+    (h : Array α → IO (β × Status)) : Server :=
+  registerClientStream s service method fun reqBytes => do
+    let mut reqs : Array α := #[]
+    for b in reqBytes do
+      match decode b with
+      | .error e => return (ByteArray.empty, Status.invalidArgument e)
+      | .ok r => reqs := reqs.push r
+    let (resp, st) ← h reqs
+    return (encode resp, st)
+
+/-- Typed bidi register (batch arrays both ways). -/
+def registerBidiTyped (s : Server) (service method : String)
+    (decode : ByteArray → Except String α) (encode : β → ByteArray)
+    (h : Array α → IO (Array β × Status)) : Server :=
+  registerBidi s service method fun reqBytes => do
+    let mut reqs : Array α := #[]
+    for b in reqBytes do
+      match decode b with
+      | .error e => return (#[], Status.invalidArgument e)
+      | .ok r => reqs := reqs.push r
+    let (resps, st) ← h reqs
+    return (resps.map encode, st)
 
 private def findHandler (s : Server) (path : String) : Option MethodHandler :=
   Id.run do

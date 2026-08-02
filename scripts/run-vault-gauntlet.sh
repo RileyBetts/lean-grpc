@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Build and run the VaultGauntlet multi-act lean-grpc stress app.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

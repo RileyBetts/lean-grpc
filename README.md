@@ -11,7 +11,8 @@ Standalone project. Consumers depend on it via Lake.
 | Doc | Description |
 |---|---|
 | [docs/README.md](docs/README.md) | Documentation index |
-| [Getting started](docs/getting-started.md) | First server/client, TLS, Lake dependency |
+| [Getting started](docs/getting-started.md) | Typed unary helloworld, TLS, Lake dependency |
+| [Cookbooks](docs/cookbook-unary.md) | Unary · [streaming](docs/cookbook-streaming.md) · [interceptors / mTLS](docs/cookbook-interceptors.md) |
 | [Architecture](docs/architecture.md) | Layering and data flow |
 | [API reference](docs/api-reference.md) | Module catalogue |
 | [Protocol mapping](docs/protocol-mapping.md) | gRPC-over-HTTP/2 mapping for this stack |
@@ -22,7 +23,7 @@ Standalone project. Consumers depend on it via Lake.
 
 ## Status
 
-Near **grpc-go / official interop** parity for general-purpose use. Core wire + Go/Python interop and stress/framing gates are CI-gated. Cloud-edge items (live Google ADC, ALTS) remain mock/allowlisted.
+Near **grpc-go / official interop** parity for general-purpose use. Core wire + Go/Python/Rust interop and stress/framing gates are CI-gated. Cloud-edge items (live Google ADC, ALTS) remain mock/allowlisted.
 
 Rough estimates (see [conformance.md](docs/conformance.md) for detail):
 
@@ -31,6 +32,7 @@ Rough estimates (see [conformance.md](docs/conformance.md) for detail):
 | Official gRPC standard | ~95% | ~90% |
 | vs grpc-go surface | ~93% | ~88% |
 | vs Python (grpcio) peer | ~92% | ~82% |
+| vs Rust (tonic) peer | ~92% | ~82% |
 
 | Layer | Package | Notes |
 |---|---|---|
@@ -52,18 +54,19 @@ Rough estimates (see [conformance.md](docs/conformance.md) for detail):
 lake build
 lake build bytesTests hpackTests h2Tests grpcTests trailersLoopback
 ./.lake/build/bin/grpcTests
-./scripts/build_native.sh            # zlib_helper (+ optional tls_proxy)
+./scripts/build_native.sh            # optional zlib_helper for peer gzip (+ tls_proxy)
 ```
 
 ## Quick start
 
 ```bash
+./scripts/gen-helloworld.sh   # typed stubs → Examples/Helloworld/Generated.lean
 lake build helloworldServer helloworldClient
 ./.lake/build/bin/helloworldServer &
 ./.lake/build/bin/helloworldClient 127.0.0.1 50051 World
 ```
 
-Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
+Full walkthrough: [docs/getting-started.md](docs/getting-started.md). Cookbooks: [unary](docs/cookbook-unary.md), [streaming](docs/cookbook-streaming.md), [interceptors / mTLS](docs/cookbook-interceptors.md).
 
 ## Interop
 
@@ -72,6 +75,8 @@ Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
 GRPC_PORT=10001 ./scripts/interop-go-lean.sh
 ./scripts/run-python-to-lean.sh             # Python client → Lean
 GRPC_PORT=10001 ./scripts/interop-lean-python.sh
+./scripts/run-rust-to-lean.sh               # Rust (tonic) client → Lean
+GRPC_PORT=10001 ./scripts/interop-lean-rust.sh
 ./scripts/interop-compress-go-lean.sh       # gzip both directions (Go gzip server)
 ./scripts/interop-tls-go-lean.sh            # in-process TLS Lean → Go
 ./scripts/run-adc-smoke.sh                  # ADC against local mock

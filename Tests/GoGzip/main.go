@@ -1,3 +1,4 @@
+// Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 // Peer gzip unary round-trip against a Lean (or any) gRPC TestService/UnaryCall.
 package main
 
