@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Hard-gate wrapper for the three narrative stress demos + framing matrix.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

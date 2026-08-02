@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Python interop client → Lean interop server (replaces Go→Lean matrix).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

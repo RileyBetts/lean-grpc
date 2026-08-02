@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Exercises the *real* protoc-plugin path of protoc-gen-lean4-grpc: decoding a binary
 # `google.protobuf.compiler.CodeGeneratorRequest` from stdin and emitting a real
 # `CodeGeneratorResponse` (message structs + typed client/server code) on stdout.

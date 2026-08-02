@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 """Python gRPC interop client (same non-auth cases as the Go stock client)."""
 from __future__ import annotations
 

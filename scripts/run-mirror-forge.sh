@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Lean↔Lean MirrorForge dual-backend stress demo.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

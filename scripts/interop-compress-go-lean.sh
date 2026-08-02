@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Compression matrix: Go gzip client → Lean; Lean client → Go gzip-enabled server.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

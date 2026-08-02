@@ -68,7 +68,8 @@ Low-level unary on an `H2.ClientConn` (scheme http/https, user-agent, compressio
 | `connectH2c host port` | Plain h2c channel |
 | `dial target opts svc?` | Resolve + balanc + connect (`dns:///`, `host:port`, `xds:///`) |
 | `unary ch service method request metadata? timeout? compress?` | Unary RPC |
-| `openStream ch service method metadata?` | Bidi client stream |
+| `openStream ch service method metadata?` | Interactive bidi client stream |
+| `serverStream` / `clientStream` / `bidiStream` | Batch streaming helpers (messages + status) |
 | `get` / `goAway` / `close` | Connection pool / drain |
 | `maxMsgSize` / `maxSendMsgSize` / `maxRecvMsgSize` | Message limits (default 4 MiB) |
 | `keepaliveMs` | Idle PING interval |
@@ -77,7 +78,7 @@ Low-level unary on an `H2.ClientConn` (scheme http/https, user-agent, compressio
 
 ### `Grpc.Stream`
 
-`ClientStream` with `StreamWriter.send` / `halfClose` and `StreamReader.recv?`. Server handler abbrevs: `ServerStreamHandler`, `ClientStreamHandler`, `BidiStreamHandler`.
+`ClientStream` with `StreamWriter.send` / `sendAll` / `halfClose` and `StreamReader.recv?` / `recvAll` / `status`. Server handler abbrevs: `ServerStreamHandler`, `ClientStreamHandler`, `BidiStreamHandler`.
 
 ### `Grpc.Interceptor`
 
@@ -97,7 +98,8 @@ Unary middleware:
 |---|---|
 | `empty` | Empty registry |
 | `register` | Unary `ByteArray → IO (ByteArray × Status)` |
-| `registerServerStream` / `registerClientStream` / `registerBidi` | Streaming |
+| `registerServerStream` / `registerClientStream` / `registerBidi` | Streaming (raw bytes) |
+| `registerTyped` / `registerServerStreamTyped` / `registerClientStreamTyped` / `registerBidiTyped` | Streaming/unary with decode/encode adapters |
 | `serveH2c` | Listen h2c |
 | `serveTls` | Listen TLS+ALPN (via `Tls.Config`) |
 | `maxMsgSize` | Inbound limit |
@@ -223,9 +225,11 @@ Consumers usually stay in `Grpc.*`. Useful lower APIs:
 Executable `protoc-gen-lean4-grpc`:
 
 1. **Text `.proto`** (`LEAN_GRPC_PROTO` / argv) → `Generated.lean` with `ByteArray` RPC stubs  
-2. **protoc plugin** — stdin `CodeGeneratorRequest` → stdout response with message structs + typed unary/streaming stubs  
+2. **protoc plugin** — stdin `CodeGeneratorRequest` → stdout response with message structs + typed unary/streaming **client** stubs + typed unary **server** register helpers  
 
-Fixture: `scripts/run-codegen-fixture.sh`.
+Regenerate the helloworld example: `scripts/gen-helloworld.sh` (uses the same descriptor fixture as `scripts/run-codegen-fixture.sh`).
+
+**Current limits (descriptor path):** nested messages, `repeated`, `oneof`, maps, and many scalar wire types are incomplete or fall back to `bytes`. Streaming server registration is not emitted — use `Server.register*Typed`. Stream client stubs are batch (send-all / recv-all), not interactive duplex.
 
 ---
 

@@ -1,47 +1,42 @@
 /-
-Copyright (c) 2026 RileyBetts. All rights reserved.
+Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Grpc
 import Proto
-import H2
-import Bytes.Slice
-import Bytes.Pool
 
-private def headers (host method : String) : Array Hpack.HeaderField := #[
-  Grpc.Metadata.methodPost,
-  Grpc.Metadata.schemeHttp,
-  ⟨Grpc.Metadata.ascii ":authority", Grpc.Metadata.ascii host⟩,
-  Grpc.Metadata.path "routeguide.RouteGuide" method,
-  Grpc.Metadata.contentTypeGrpc,
-  Grpc.Metadata.teTrailers
-]
-
+/-- RouteGuide client using `Channel` streaming helpers (not raw `H2.Client.unary`). -/
 def main (args : List String) : IO Unit := do
   let host := args[0]?.getD "127.0.0.1"
   let port := (args[1]?.getD "50052").toNat?.getD 50052 |>.toUInt16
   let ch ← Grpc.Channel.connectH2c host port
-  let c ← Grpc.Channel.get ch
 
-  -- GetFeature
-  let r1 ← H2.Client.unary c (headers host "GetFeature") (Grpc.Message.encodeId ByteArray.empty)
-  IO.println s!"GetFeature bytes={r1.data.size}"
+  -- GetFeature (unary)
+  let point := Proto.Point.encode { latitude := 1, longitude := 2 }
+  let r1 ← Grpc.Channel.unary ch "routeguide.RouteGuide" "GetFeature" point
+  if r1.status.code != .ok then
+    throw (IO.userError s!"GetFeature failed: {r1.status.message}")
+  let feat ← IO.ofExcept (Proto.Feature.decode r1.message)
+  IO.println s!"GetFeature name={feat.name}"
 
   -- ListFeatures (server streaming)
-  let r2 ← H2.Client.unary c (headers host "ListFeatures") (Grpc.Message.encodeId ByteArray.empty)
-  let feats ← IO.ofExcept (Grpc.Message.decodeAll (Bytes.Slice.ofByteArray r2.data))
+  let (feats, st2) ← Grpc.Channel.serverStream ch "routeguide.RouteGuide" "ListFeatures" ByteArray.empty
+  if st2.code != .ok then
+    throw (IO.userError s!"ListFeatures failed: {st2.message}")
   IO.println s!"ListFeatures count={feats.size}"
 
   -- RecordRoute (client streaming)
-  let mut body := ByteArray.empty
-  for _ in [:3] do
-    body := Bytes.Pool.pushBytes body (Grpc.Message.encodeId ByteArray.empty)
-  let r3 ← H2.Client.unary c (headers host "RecordRoute") body
-  IO.println s!"RecordRoute bytes={r3.data.size}"
+  let points := #[point, point, point]
+  let r3 ← Grpc.Channel.clientStream ch "routeguide.RouteGuide" "RecordRoute" points
+  if r3.status.code != .ok then
+    throw (IO.userError s!"RecordRoute failed: {r3.status.message}")
+  let summary ← IO.ofExcept (Proto.RouteSummary.decode r3.message)
+  IO.println s!"RecordRoute pointCount={summary.pointCount}"
 
   -- RouteChat (bidi echo)
-  let note := Proto.Wire.encodeString ByteArray.empty 2 "hello"
-  let r4 ← H2.Client.unary c (headers host "RouteChat") (Grpc.Message.encodeId note)
-  let notes ← IO.ofExcept (Grpc.Message.decodeAll (Bytes.Slice.ofByteArray r4.data))
+  let note := Proto.RouteNote.encode { message := "hello", location := { latitude := 1, longitude := 2 } }
+  let (notes, st4) ← Grpc.Channel.bidiStream ch "routeguide.RouteGuide" "RouteChat" #[note]
+  if st4.code != .ok then
+    throw (IO.userError s!"RouteChat failed: {st4.message}")
   IO.println s!"RouteChat echo count={notes.size}"
   IO.println "routeGuide client OK"

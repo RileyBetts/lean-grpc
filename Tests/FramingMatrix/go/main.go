@@ -1,3 +1,4 @@
+// Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 // Go client side of the peer-framing matrix against the Lean FramingMatrix server.
 package main
 

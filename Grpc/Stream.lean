@@ -1,5 +1,5 @@
 /-
-Copyright (c) 2026 RileyBetts. All rights reserved.
+Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Bytes.Pool
@@ -10,6 +10,7 @@ import Hpack
 import Grpc.Status
 import Grpc.Message
 import Grpc.Metadata
+import Grpc.Client
 
 namespace Grpc.Stream
 
@@ -164,7 +165,34 @@ def getTrailers (r : StreamReader) : IO (Array Hpack.HeaderField) := do
   discard <| recv? r  -- drain
   return (← r.trailers.get).getD #[]
 
+/-- Drain the stream, collecting every complete message. -/
+def recvAll (r : StreamReader) : IO (Array ByteArray) := do
+  let mut acc : Array ByteArray := #[]
+  let mut more := true
+  while more do
+    match ← recv? r with
+    | none => more := false
+    | some m => acc := acc.push m
+  return acc
+
+/-- Status parsed from response headers + trailers after the stream completes. -/
+def status (r : StreamReader) : IO Status := do
+  let headers := (← r.headers.get).getD #[]
+  let trailers := (← r.trailers.get).getD #[]
+  return Client.statusFromHeaders headers trailers
+
 end StreamReader
+
+namespace StreamWriter
+
+/-- Send every message, then half-close the client side. -/
+def sendAll (w : StreamWriter) (msgs : Array ByteArray) (halfCloseAfter : Bool := true) : IO Unit := do
+  for m in msgs do
+    send w m
+  if halfCloseAfter then
+    halfClose w
+
+end StreamWriter
 
 /-- Open a client streaming call (headers sent, stream open for send/recv). -/
 def openCall (c : H2.ClientConn) (headers : Array Hpack.HeaderField) : IO ClientStream := do

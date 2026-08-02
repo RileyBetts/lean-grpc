@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Fake ADS exercising the full xDS surface:
 #   1. Direct EDS-by-cluster-name resolve (legacy path).
 #   2. Full LDS → RDS → CDS → EDS chain over one ADS session.

@@ -1,3 +1,4 @@
+/* Copyright © 2026, Riley Betts Ltd (rileybetts.ai) */
 /*
  * Lean 4 FFI for in-process OpenSSL TLS + ALPN h2.
  * Also provides small HTTPS/HTTP helpers used by ADC (Phase 2).

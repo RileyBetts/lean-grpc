@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 """Minimal GCE metadata + OAuth token mock for ADC CI."""
 from __future__ import annotations
 

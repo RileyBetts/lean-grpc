@@ -9,6 +9,7 @@
 | Official gRPC standard (PROTOCOL-HTTP2 + core RPC) | **~95%** | **~90%** | Core wire solid; gaps: full `cacheable_unary` (needs caching proxy), HTTP CONNECT out of scope, some duplex still buffered-batch |
 | vs grpc-go app surface | **~93%** | **~88%** | Strong general-app parity; ALTS/GCE allowlisted; grpclb thin; binary-log/stats/interceptors shallower than grpc-go; hedge race cautious |
 | vs Python (grpcio) peer surface | **~92%** | **~82%** | Shared wire covered both ways; no Python stress demo yet; fewer chaos/negative cases than Go |
+| vs Rust (tonic) peer surface | **~92%** | **~82%** | Same official TestService matrix as Python (`rust_interop/`); no Rust stress demo yet |
 
 Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, cancel timing) and **cloud-live** paths (ADC/ALTS/xDS against real infra), not missing basic RPCs. Stress demos found two such bugs (gzip stream decode; bidi empty `END_STREAM`); FramingMatrix + `run-stress-demos.sh` now hard-gate those classes.
 
@@ -16,7 +17,7 @@ Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, 
 |---|---|
 | vs grpc-go app surfaces | **~93% implemented / ~88% tested** (see table above) |
 | h2spec | **145/146 pass, 1 skipped** (full suite hard CI; skip is h2spec suite skip, not an allowlisted failure) |
-| Official non-auth interop | Lean↔Lean; **Go↔Lean**; **Python↔Lean** (CI) |
+| Official non-auth interop | Lean↔Lean; **Go↔Lean**; **Python↔Lean**; **Rust↔Lean** (CI) |
 | Stress demos + framing matrix | **Hard CI** (`scripts/run-stress-demos.sh`): VaultGauntlet, MirrorForge, SignalWeave, FramingMatrix |
 | Compression | identity/gzip/deflate/snappy; Go gzip client→Lean; Lean→Go gzip-enabled server |
 | In-process TLS | Lean→Go TLS unary (no sidecar); Lean↔Lean mTLS (client cert required/verified) |
@@ -32,7 +33,7 @@ Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, 
 | Core RPC + duplex + deadlines | 100 | Incremental FullDuplex; mid-RPC deadline RST |
 | Peer framing / empty half-close | 100 | FramingMatrix + stress demos hard-gated; multi-frame gzip `decodeOneIO`; bidi empty `DATA+END_STREAM` finalize |
 | PROTOCOL-HTTP2 wire correctness | 100 | HTTP 415 on bad content-type; RST→status mapping; `grpc-status-details-bin`/`google.rpc.Status`; trailers-only errors; `user-agent`; `:scheme https` on TLS |
-| Official non-auth interop | 100 | Go + Python matrices in CI |
+| Official non-auth interop | 100 | Go + Python + Rust matrices in CI |
 | Protobuf + codegen | 97 | Text `.proto` path (`LEAN_GRPC_PROTO`) unchanged; real `protoc`-plugin path now decodes `CodeGeneratorRequest` and emits real message structs + typed client/server/bidi signatures (`scripts/run-codegen-fixture.sh`) |
 | TLS + ALPN h2 | 100 | In-process OpenSSL (`tls_ffi`); sidecar optional; optional mTLS (client cert dial + server client-CA verify) |
 | Channel/call credentials | 100 | JWT/OAuth/per-RPC + ADC Bearer (mock-proven) |
@@ -48,7 +49,7 @@ Remaining risk is mostly **peer lifecycle edges** (half-close, compress+stream, 
 
 | Surface | Tested how |
 |---|---|
-| Core / streaming / metadata | Live peers: Lean, Go, Python |
+| Core / streaming / metadata | Live peers: Lean, Go, Python, Rust |
 | Compression | Live Go with gzip codec registered (`Tests/GoGzipServer`) |
 | TLS | Live Go TLS server + Lean in-process client; Lean↔Lean mTLS loopback (`tlsLoopback`, self-signed CA via system `openssl`) |
 | ADC | Local HTTP mock (`scripts/mock-adc-server.py`) in CI; `scripts/run-adc-live.sh` documents a real-Google check (manual/nightly, needs live credentials) |
@@ -134,6 +135,8 @@ Notes:
 GRPC_PORT=10001 ./scripts/interop-go-lean.sh
 ./scripts/run-python-to-lean.sh
 GRPC_PORT=10001 ./scripts/interop-lean-python.sh
+./scripts/run-rust-to-lean.sh
+GRPC_PORT=10001 ./scripts/interop-lean-rust.sh
 ./scripts/interop-compress-go-lean.sh
 ./scripts/interop-tls-go-lean.sh
 ./scripts/run-adc-smoke.sh

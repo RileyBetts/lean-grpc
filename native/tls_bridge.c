@@ -1,3 +1,4 @@
+/* Copyright © 2026, Riley Betts Ltd (rileybetts.ai) */
 /* Minimal OpenSSL client ALPN h2 helper: handshake on a connected TCP fd. */
 #include <stdint.h>
 #include <stdio.h>

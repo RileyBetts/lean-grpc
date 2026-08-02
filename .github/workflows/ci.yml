@@ -152,6 +152,26 @@ jobs:
           chmod +x scripts/interop-lean-python.sh
           GRPC_PORT=10001 ./scripts/interop-lean-python.sh
 
+  interop-rust:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          test: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Lean interop binaries
+        run: lake build interopServer interopClient
+      - name: Rust client → Lean server
+        run: |
+          chmod +x scripts/run-rust-to-lean.sh
+          ./scripts/run-rust-to-lean.sh
+      - name: Lean client → Rust server
+        run: |
+          chmod +x scripts/interop-lean-rust.sh
+          GRPC_PORT=10001 ./scripts/interop-lean-rust.sh
+
   h2spec:
     runs-on: ubuntu-latest
     needs: build-test

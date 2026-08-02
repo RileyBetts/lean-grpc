@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 # Peer-framing matrix: Lean↔Lean + Go→Lean against FramingMatrix server.
 # Covers unary/server/client/bidi × identity/gzip × empty half-close × deadline/cancel/415.
 set -euo pipefail

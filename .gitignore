@@ -4,6 +4,7 @@
 *.c.o
 __pycache__/
 .venv-interop/
+rust_interop/target/
 .DS_Store
 /examples/generated/
 .lake/deps/

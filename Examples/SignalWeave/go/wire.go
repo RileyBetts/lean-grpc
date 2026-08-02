@@ -1,3 +1,4 @@
+// Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 package main
 
 // Minimal protobuf wire helpers matching lean-grpc Proto.Wire field layout.

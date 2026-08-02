@@ -1,3 +1,4 @@
+/* Copyright © 2026, Riley Betts Ltd (rileybetts.ai) */
 /* stdin/stdout zlib gzip filter used when LEAN_GRPC_ZLIB_HELPER is set. */
 #include <stdint.h>
 #include <stdio.h>
