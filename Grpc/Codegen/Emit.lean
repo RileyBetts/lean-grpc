@@ -450,6 +450,11 @@ def emitServiceTyped (pkg : String) (svc : ServiceDescriptor) : Except String St
         out := out ++ "    | .ok req =>\n"
         out := out ++ "      let (resp, st) ← h req\n"
         out := out ++ s!"      return ({respTy}.encode resp, st)\n\n"
+        out := out ++ s!"/-- Register a typed unary handler with `ServerCallContext` for `{svc.name}/{m.name}`. -/\n"
+        out := out ++ s!"def register{svc.name}{m.name}WithContext (s : Grpc.Server)\n"
+        out := out ++ s!"    (h : Grpc.ServerCallContext → {reqTy} → IO ({respTy} × Grpc.Status)) : Grpc.Server :=\n"
+        out := out ++ s!"  Grpc.Server.registerTypedWithContext s \"{full}\" \"{m.name}\"\n"
+        out := out ++ s!"    {reqTy}.decode {respTy}.encode h\n\n"
     return out
 
 /-- Emit one `.lean` file's worth of message structs + typed client/server code for a single

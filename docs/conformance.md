@@ -90,7 +90,9 @@ Notes:
 - mTLS: `Grpc.Tls.Config.certPath`/`keyPath` present a client certificate on dial;
   `Grpc.Tls.Config.clientCaPath` makes `serveTls`/`Grpc.Tls.serveH2` require and verify a
   client certificate. Covered end-to-end by `tlsLoopback` (plain TLS, mTLS-reject-without-cert,
-  mTLS-accept-with-cert), skipped only if `openssl` is unavailable in the environment.
+  mTLS-accept-with-cert, dual-cert peer-identity binding, metadata non-forgery, h2c →
+  `peerIdentity = none`, accept-loop survival), skipped only if `openssl` is unavailable.
+  Unary handlers read verified identity via `registerWithContext` / `ServerCallContext.peerIdentity`.
 - ADC composition: `Grpc.Adc.dialOptions` builds `Credentials.DialOptions` combining TLS
   channel credentials with an ADC-derived per-RPC Bearer token, for calling real Google APIs.
 - xDS ADS now resolves the full chain a real xDS-enabled client would: `Grpc.XdsAds.resolveChain`
@@ -121,9 +123,10 @@ Notes:
   preferred/primary discovery+LB path in this library; grpclb exists for interop with older
   balancers that only speak the plain server-list protocol.
 - Interceptors: `Grpc.Interceptor` provides composable client/server unary interceptor chains
-  (`applyClient`/`applyServer`, `callUnary`/`registerUnary`) plus ready-made logging
-  interceptors; additional cross-cutting concerns (auth, metrics, retries) compose the same
-  way by adding more `ClientUnary`/`ServerUnary` elements to the chain array.
+  (`applyClient`/`applyServer`, `callUnary`/`registerUnary`) plus context-aware
+  `registerUnaryWithContext` / `requirePeerIdentity` and ready-made logging interceptors;
+  additional cross-cutting concerns (auth, metrics, retries) compose the same way by adding
+  more `ClientUnary`/`ServerUnary` (or `ServerUnaryWithContext`) elements to the chain array.
 - Soak: `Bench/Soak.lean` (`benchSoak`) now understands the standard `--soak_*` flags used by
   grpc's `rpc_soak`/`channel_soak` tools (`soak_iterations`, `soak_max_failures`,
   `soak_per_iteration_max_acceptable_latency_ms`, `soak_min_time_ms_between_rpcs`,

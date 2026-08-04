@@ -7,7 +7,22 @@ import Examples.MirrorForge.Protocol
 
 open Examples.MirrorForge.Protocol
 
-/-- One forge mirror. Set `FORGE_ID` / `GRPC_PORT` (defaults: alpha / 50201). -/
+/-- Accept forge credentials from Bearer metadata **or** body `token` (fallback for
+    existing h2c MirrorForge clients). Under mTLS, `requirePeerIdentity` may also
+    sit on the interceptor chain. -/
+private def authorized (ctx : Grpc.ServerCallContext) (bodyToken : String) : Bool :=
+  match ctx.metadata.get? "authorization" with
+  | some auth =>
+      auth == s!"Bearer {accessToken}" || bodyToken == accessToken
+  | none =>
+      bodyToken == accessToken
+
+/-- One forge mirror. Set `FORGE_ID` / `GRPC_PORT` (defaults: alpha / 50201).
+
+    TLS (optional):
+    * `TLS_CERT` / `TLS_KEY` — serve with in-process TLS+ALPN `h2`
+    * `TLS_CLIENT_CA` — require and verify client certs (mTLS); Stamp uses
+      `requirePeerIdentity` and embeds peer CN in the stamp mark when present -/
 def main : IO Unit := do
   let port := ((← IO.getEnv "GRPC_PORT").getD "50201").toNat?.getD 50201 |>.toUInt16
   let forgeId := (← IO.getEnv "FORGE_ID").getD "alpha"
@@ -22,25 +37,39 @@ def main : IO Unit := do
   let flakyLeft ← IO.mkRef (1 : Nat)  -- first Quench fails with UNAVAILABLE
   let logSink ← IO.mkRef (#[] : Array String)
 
-  let chain : Array Grpc.Interceptor.ServerUnary := #[
-    Grpc.Interceptor.loggingServer logSink
-  ]
+  let cert := (← IO.getEnv "TLS_CERT").getD ""
+  let key := (← IO.getEnv "TLS_KEY").getD ""
+  let clientCa ← IO.getEnv "TLS_CLIENT_CA"
+  let useTls := !cert.isEmpty && !key.isEmpty
+  let mtls := useTls && clientCa.isSome
+
+  let mut chain : Array Grpc.Interceptor.ServerUnaryWithContext :=
+    #[Grpc.Interceptor.loggingServerWithContext logSink]
+  if mtls then
+    chain := chain.push Grpc.Interceptor.requirePeerIdentity
 
   let mut s := Grpc.Server.empty
 
-  -- Stamp: token-gated unary through interceptor chain
-  s := Grpc.Interceptor.registerUnary s serviceName "Stamp" chain fun reqBytes => do
+  -- Stamp: context-aware unary (Bearer metadata preferred; body token fallback)
+  s := Grpc.Interceptor.registerUnaryWithContext s serviceName "Stamp" chain fun ctx reqBytes => do
     let req ← IO.ofExcept (StampRequest.decode reqBytes)
-    if req.token != accessToken then
+    if !(authorized ctx req.token) then
       Grpc.Channelz.recordFailure counters
       return (ByteArray.empty, Grpc.Status.unauthenticated "bad forge token")
     if req.billet.isEmpty then
       Grpc.Channelz.recordFailure counters
       return (ByteArray.empty, Grpc.Status.invalidArgument "empty billet")
     let report ← orcaRef.get
+    let peerCn :=
+      match ctx.peerIdentity with
+      | some id => id.commonName
+      | none => ""
+    let mark :=
+      if peerCn.isEmpty then s!"{forgeId}:{req.billet}"
+      else s!"{forgeId}:{peerCn}:{req.billet}"
     let reply := StampReply.encode {
       forgeId
-      mark := s!"{forgeId}:{req.billet}"
+      mark
       cpuLoad := report.cpuUtilization
     }
     Grpc.Channelz.recordSuccess counters
@@ -79,5 +108,15 @@ def main : IO Unit := do
     s := Grpc.Channelz.register s counters
   | _ => pure ()
 
-  IO.println s!"MirrorForge[{forgeId}] on 127.0.0.1:{port.toNat}"
-  Grpc.Server.serveH2c s { host := "127.0.0.1", port }
+  if useTls then
+    let tlsCfg : Grpc.Tls.Config := {
+      certPath := some (System.FilePath.mk cert)
+      keyPath := some (System.FilePath.mk key)
+      clientCaPath := clientCa.map System.FilePath.mk
+    }
+    let mtlsNote := if mtls then " (mTLS)" else ""
+    IO.println s!"MirrorForge[{forgeId}] TLS+ALPN on 127.0.0.1:{port.toNat}{mtlsNote}"
+    Grpc.Server.serveTls s tlsCfg { host := "127.0.0.1", port }
+  else
+    IO.println s!"MirrorForge[{forgeId}] on 127.0.0.1:{port.toNat}"
+    Grpc.Server.serveH2c s { host := "127.0.0.1", port }

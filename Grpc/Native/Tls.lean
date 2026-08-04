@@ -3,6 +3,7 @@ Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import H2.Transport
+import Grpc.PeerIdentity
 
 namespace Grpc.Native.Tls
 
@@ -43,6 +44,11 @@ opaque recv (c : @& Conn) (maxBytes : @& Nat) : IO (Option ByteArray)
 
 @[extern "lean_grpc_tls_close"]
 opaque close (c : @& Conn) : IO Unit
+
+/-- Extract verified peer certificate identity after a TLS(/mTLS) handshake.
+    Returns `none` when the peer presented no certificate. -/
+@[extern "lean_grpc_tls_peer_identity"]
+opaque peerIdentity? (c : @& Conn) : IO (Option PeerIdentity)
 
 /-- ByteTransport over an in-process TLS connection. -/
 def transport (c : Conn) : H2.ByteTransport where

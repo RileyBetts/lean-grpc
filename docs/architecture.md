@@ -73,6 +73,8 @@ DialOptions
 
 ADC (`Grpc.Adc`) fetches a token (service-account JWT exchange or GCE metadata) and injects `authorization: Bearer …`. Live Google calls need real credentials; CI uses `scripts/mock-adc-server.py`.
 
+Server-side mTLS: when `Tls.Config.clientCaPath` is set, `serveTls` extracts the verified peer certificate per connection (`Native.Tls.peerIdentity?`) and threads it into unary handlers via `ServerCallContext` / `registerWithContext`. Identity never comes from client metadata.
+
 ## Discovery and load balancing
 
 ```text

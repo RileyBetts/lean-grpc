@@ -34,6 +34,20 @@ def main : IO Unit := do
   Grpc.Server.serveH2c s { host := "127.0.0.1", port := 50051 }
 ```
 
+### With `ServerCallContext` (mTLS peer identity / inbound metadata)
+
+Generated stubs also emit `register*WithContext`:
+
+```lean
+s := helloworld.registerGreeterSayHelloWithContext s fun ctx req => do
+  match ctx.peerIdentity with
+  | none => pure ({ message := "" }, .unauthenticated "mtls_required")
+  | some id =>
+      pure ({ message := s!"Hello, {req.name} (from {id.commonName})" }, .ok)
+```
+
+See [Cookbook: interceptors & auth](cookbook-interceptors.md) for mTLS `serveTls` and MirrorForge.
+
 ## Client
 
 ```lean
