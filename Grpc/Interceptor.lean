@@ -76,6 +76,18 @@ def loggingServer (sink : IO.Ref (Array String)) : ServerUnary := fun service me
   sink.modify (·.push s!"< {service}/{method} resp={resp.size}B status={st.code.toUInt32}")
   return (resp, st)
 
+/-- Context-aware variant of `loggingServer` (logs peer CN when present). -/
+def loggingServerWithContext (sink : IO.Ref (Array String)) : ServerUnaryWithContext :=
+  fun service method next ctx req => do
+    let peer :=
+      match ctx.peerIdentity with
+      | some id => id.commonName
+      | none => "-"
+    sink.modify (·.push s!"> {service}/{method} req={req.size}B peer={peer}")
+    let (resp, st) ← next ctx req
+    sink.modify (·.push s!"< {service}/{method} resp={resp.size}B status={st.code.toUInt32}")
+    return (resp, st)
+
 /-- Ready-made client interceptor: same as `loggingServer`, mirrored for the call site. -/
 def loggingClient (sink : IO.Ref (Array String)) : ClientUnary := fun service method next req => do
   sink.modify (·.push s!"> {service}/{method} req={req.size}B")

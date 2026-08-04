@@ -25,6 +25,26 @@ private def containsService (services : Array String) (name : String) : Bool :=
       if s == name then return true
     return false
 
+/-- Dial options: h2c by default; set `TLS_CA` (+ optional client `TLS_CERT`/`TLS_KEY`) for TLS/mTLS. -/
+private def dialOptions : IO Grpc.Credentials.DialOptions := do
+  match ← IO.getEnv "TLS_CA" with
+  | none => pure {}
+  | some ca =>
+      let cert := (← IO.getEnv "TLS_CERT").getD ""
+      let key := (← IO.getEnv "TLS_KEY").getD ""
+      let serverName := (← IO.getEnv "TLS_SERVER_NAME").getD "127.0.0.1"
+      let tls : Grpc.Tls.Config := {
+        caPath := some (System.FilePath.mk ca)
+        serverName := some serverName
+        certPath := if cert.isEmpty then none else some (System.FilePath.mk cert)
+        keyPath := if key.isEmpty then none else some (System.FilePath.mk key)
+      }
+      pure { channel := .tls tls }
+
+/-- Preferred Stamp credentials: Bearer metadata (body token still sent for h2c fallback demos). -/
+private def stampAuthMd : Grpc.Metadata :=
+  Grpc.Interceptor.bearerMetadata accessToken
+
 def main (args : List String) : IO UInt32 := do
   let host := args[0]?.getD "127.0.0.1"
   let portA := (args[1]?.getD "50201").toNat?.getD 50201 |>.toUInt16
@@ -41,17 +61,20 @@ def main (args : List String) : IO UInt32 := do
     if hedgeCfg.hedging.isSome then pass "act.hedge_config" "parsed"
     else fail "act.hedge_config" "missing hedgingPolicy")
 
+  let opts ← dialOptions
   IO.println "mirrorForge: dialing…"
-  let chRR ← Grpc.Channel.dial s!"dns:///{host}:{portA.toNat}" {} rrCfg
-  let chRetry ← Grpc.Channel.dial s!"{host}:{portA.toNat}" {} retryCfg
+  let chRR ← Grpc.Channel.dial s!"dns:///{host}:{portA.toNat}" opts rrCfg
+  let chRetry ← Grpc.Channel.dial s!"{host}:{portA.toNat}" opts retryCfg
   IO.println "mirrorForge: dialed"
 
-  -- Act I: interceptor-wrapped Stamp
+  -- Act I: interceptor-wrapped Stamp (Bearer metadata + body token)
   let clientLog ← IO.mkRef (#[] : Array String)
   let stampReq := StampRequest.encode { token := accessToken, billet := "ingot-1" }
   IO.println "mirrorForge: stamp_1…"
-  let stamp1 ← Grpc.Interceptor.callUnary chRR serviceName "Stamp"
-    #[Grpc.Interceptor.loggingClient clientLog] stampReq
+  let stampInvoker : Grpc.Interceptor.ClientUnaryInvoker := fun r =>
+    Grpc.Channel.unary chRR serviceName "Stamp" r stampAuthMd
+  let stamp1 ← Grpc.Interceptor.applyClient serviceName "Stamp"
+    #[Grpc.Interceptor.loggingClient clientLog] stampInvoker stampReq
   IO.println s!"mirrorForge: stamp_1 status={stamp1.status.code.toUInt32}"
   checks := checks.push (expectOk "act.stamp_1" stamp1.status.code)
   let reply1 ← IO.ofExcept (StampReply.decode stamp1.message)
@@ -67,7 +90,7 @@ def main (args : List String) : IO UInt32 := do
 
   -- Act II: round-robin across two forges
   let stamp2 ← Grpc.Channel.unary chRR serviceName "Stamp"
-    (StampRequest.encode { token := accessToken, billet := "ingot-2" })
+    (StampRequest.encode { token := accessToken, billet := "ingot-2" }) stampAuthMd
   checks := checks.push (expectOk "act.stamp_2" stamp2.status.code)
   let reply2 ← IO.ofExcept (StampReply.decode stamp2.message)
   checks := checks.push (
@@ -76,7 +99,7 @@ def main (args : List String) : IO UInt32 := do
     else
       fail "act.round_robin" s!"both hit {reply1.forgeId} (is the second forge up?)")
 
-  -- Act III: bad token → UNAUTHENTICATED
+  -- Act III: bad token → UNAUTHENTICATED (no Bearer, wrong body token)
   let bad ← Grpc.Channel.unary chRR serviceName "Stamp"
     (StampRequest.encode { token := "nope", billet := "x" })
   checks := checks.push (
@@ -121,7 +144,7 @@ def main (args : List String) : IO UInt32 := do
   -- Act VIII: Binary log
   let sink ← Grpc.BinaryLog.newSink
   let logged ← Grpc.BinaryLog.logUnaryCall sink 7 chRR serviceName "Stamp"
-    (StampRequest.encode { token := accessToken, billet := "logged" })
+    (StampRequest.encode { token := accessToken, billet := "logged" }) stampAuthMd
   checks := checks.push (expectOk "act.binlog.call" logged.status.code)
   let ev ← Grpc.BinaryLog.events sink
   checks := checks.push (
@@ -149,7 +172,7 @@ def main (args : List String) : IO UInt32 := do
   -- Act XI: SlowStamp (plain unary; hedging races use background tasks that can
   -- keep the process alive, so we only assert the config parse + a slow RPC OK).
   let slow ← Grpc.Channel.unary chRetry serviceName "SlowStamp"
-    (StampRequest.encode { token := accessToken, billet := "anneal" })
+    (StampRequest.encode { token := accessToken, billet := "anneal" }) stampAuthMd
   checks := checks.push (expectOk "act.slow_stamp" slow.status.code)
 
   let mut failed : Nat := 0

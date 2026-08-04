@@ -11,6 +11,8 @@ Additive IAM surface for enterprise mTLS AuthN (lean-compliance G1–G4).
 - **TLS serve:** `Tls.serveH2` takes a per-connection handler factory; failed accepts/handshakes are logged and the listen loop continues.
 - **Interceptors:** `registerUnaryWithContext`, `requirePeerIdentity` (fail closed when `mtlsRequired` and identity missing).
 - **Tests:** `tlsLoopback` covers dual-cert identity binding, metadata non-forgery, h2c → `none`, accept-loop survival.
+- **Codegen:** `protoc-gen-lean4-grpc` emits `register{Svc}{Method}WithContext` alongside body-only registrars.
+- **Examples:** MirrorForge `Stamp` uses `registerUnaryWithContext` (Bearer metadata + body-token fallback; optional env-gated TLS/mTLS).
 - **Docs:** cookbook mTLS → `ctx.peerIdentity`; API reference; security PKI note.
 - **Deferred:** streaming handlers with context; trusted-proxy identity mode; JWT/OIDC validation inside lean-grpc.
 

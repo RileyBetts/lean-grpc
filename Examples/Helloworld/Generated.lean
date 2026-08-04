@@ -65,4 +65,10 @@ def registerGreeterSayHello (s : Grpc.Server)
       let (resp, st) ← h req
       return (HelloReply.encode resp, st)
 
+/-- Register a typed unary handler with `ServerCallContext` for `Greeter/SayHello`. -/
+def registerGreeterSayHelloWithContext (s : Grpc.Server)
+    (h : Grpc.ServerCallContext → HelloRequest → IO (HelloReply × Grpc.Status)) : Grpc.Server :=
+  Grpc.Server.registerTypedWithContext s "helloworld.Greeter" "SayHello"
+    HelloRequest.decode HelloReply.encode h
+
 end helloworld

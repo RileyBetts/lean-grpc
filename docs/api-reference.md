@@ -89,7 +89,7 @@ Unary middleware:
 - `registerUnary` / `callUnary`
 - `registerUnaryWithContext` / `applyServerWithContext`
 - `applyServer` / `applyClient`
-- Built-ins: `loggingServer`, `loggingClient`, `requirePeerIdentity`, `bearerMetadata`
+- Built-ins: `loggingServer`, `loggingClient`, `loggingServerWithContext`, `requirePeerIdentity`, `bearerMetadata`
 
 ---
 

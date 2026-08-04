@@ -108,6 +108,11 @@ End-to-end coverage: `tlsLoopback` (plain TLS, reject without client cert, accep
 with client cert, dual-cert identity binding, metadata non-forgery, h2c → `none`,
 accept-loop survival after failed handshake).
 
+Working example: `Examples/MirrorForge/` — `Stamp` uses `registerUnaryWithContext`
+(Bearer metadata preferred, body token fallback). Set `TLS_CERT`/`TLS_KEY`/
+`TLS_CLIENT_CA` on the server and `TLS_CA` (+ client cert) on the client for mTLS;
+see `Examples/MirrorForge/README.md`.
+
 Streaming handlers do not yet receive `ServerCallContext` (follow-on).
 
 ## See also
