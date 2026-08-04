@@ -15,14 +15,20 @@ let ch ← Grpc.Channel.dial "api.example.com:443" {
 }
 ```
 
-Server with certs:
+Server with certs (handler factory receives optional peer identity per connection):
 
 ```lean
 Grpc.Tls.serveH2 {
   certPath := some "server.pem"
   keyPath := some "server.key"
-} h2cfg handler
+  clientCaPath := some "client-ca.pem"  -- mTLS
+} h2cfg fun peerId =>
+  Grpc.Server.handlerFor s peerId (mtlsRequired := true)
 ```
+
+Prefer `Grpc.Server.serveTls`, which wires peer identity into `registerWithContext` handlers automatically. Identity fields are only as trustworthy as the `clientCaPath` CA; rotate and protect that private CA like any production AuthN root.
+
+Failed TLS handshakes are logged (`tls accept error: …`) and the accept loop continues — misbehaving clients / readiness probes do not take down the listener.
 
 Interop: `./scripts/interop-tls-go-lean.sh` (Lean client → Go TLS server, **no** `LEAN_GRPC_TLS_PROXY`).
 

@@ -1,6 +1,20 @@
 # Changelog
 
-All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **1.0.0**). Git tags such as `v1.0.0` are created manually by maintainers when publishing.
+All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **1.1.0**). Git tags such as `v1.1.0` are created manually by maintainers when publishing.
+
+## [1.1.0] — 2026-08-04
+
+Additive IAM surface for enterprise mTLS AuthN (lean-compliance G1–G4).
+
+- **Peer identity:** `Grpc.Native.Tls.peerIdentity?` extracts verified client cert fields (RFC 2253 subject DN, CN, DNS/URI SANs, SHA-256 fingerprint, serial) via OpenSSL after mTLS handshake.
+- **Request context:** `ServerCallContext` + `registerWithContext` / `registerTypedWithContext` pass `peerIdentity`, inbound metadata, and `methodPath` into unary handlers. Legacy `register` remains (ignores context).
+- **TLS serve:** `Tls.serveH2` takes a per-connection handler factory; failed accepts/handshakes are logged and the listen loop continues.
+- **Interceptors:** `registerUnaryWithContext`, `requirePeerIdentity` (fail closed when `mtlsRequired` and identity missing).
+- **Tests:** `tlsLoopback` covers dual-cert identity binding, metadata non-forgery, h2c → `none`, accept-loop survival.
+- **Docs:** cookbook mTLS → `ctx.peerIdentity`; API reference; security PKI note.
+- **Deferred:** streaming handlers with context; trusted-proxy identity mode; JWT/OIDC validation inside lean-grpc.
+
+Migration: additive API — bump consumer pin from `v1.0.0` to `v1.1.0`. Prefer `registerWithContext` for AuthN; do not trust client-supplied subject metadata.
 
 ## [1.0.0] — 2026-08-02
 

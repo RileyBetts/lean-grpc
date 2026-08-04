@@ -11,6 +11,7 @@ import Grpc.StatusDetails
 import Grpc.Compression
 import Grpc.Message
 import Grpc.Metadata
+import Grpc.PeerIdentity
 import Grpc.Server
 import Grpc.Client
 import Grpc.Stream
@@ -38,5 +39,5 @@ import Grpc.Grpclb
 import Grpc.Interceptor
 
 namespace Grpc
-def version : String := "1.0.0"
+def version : String := "1.1.0"
 end Grpc

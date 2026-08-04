@@ -10,6 +10,7 @@ import Proto
 import Grpc.Status
 import Grpc.Message
 import Grpc.Metadata
+import Grpc.PeerIdentity
 import Grpc.Stream
 import Grpc.Compression
 import Grpc.Tls
@@ -19,8 +20,11 @@ namespace Grpc
 /-- Unary handler: request bytes → response bytes + status. -/
 abbrev UnaryHandler := ByteArray → IO (ByteArray × Status)
 
+/-- Unary handler with per-RPC `ServerCallContext` (peer identity + inbound metadata). -/
+abbrev UnaryHandlerWithContext := ServerCallContext → ByteArray → IO (ByteArray × Status)
+
 inductive MethodHandler where
-  | unary (h : UnaryHandler)
+  | unary (h : UnaryHandlerWithContext)
   | serverStream (h : Stream.ServerStreamHandler)
   | clientStream (h : Stream.ClientStreamHandler)
   | bidi (h : Stream.BidiStreamHandler)
@@ -39,8 +43,13 @@ namespace Server
 
 def empty : Server := ⟨#[], 4 * 1024 * 1024⟩
 
-def register (s : Server) (service method : String) (h : UnaryHandler) : Server :=
+/-- Register a unary method that receives `ServerCallContext` (mTLS peer identity + metadata). -/
+def registerWithContext (s : Server) (service method : String) (h : UnaryHandlerWithContext) : Server :=
   { s with methods := s.methods.push ⟨service, method, .unary h⟩ }
+
+/-- Body-only unary register (ignores context). Prefer `registerWithContext` for AuthN. -/
+def register (s : Server) (service method : String) (h : UnaryHandler) : Server :=
+  registerWithContext s service method (fun _ctx req => h req)
 
 def registerServerStream (s : Server) (service method : String) (h : Stream.ServerStreamHandler) : Server :=
   { s with methods := s.methods.push ⟨service, method, .serverStream h⟩ }
@@ -60,6 +69,17 @@ def registerTyped (s : Server) (service method : String)
     | .error e => return (ByteArray.empty, Status.invalidArgument e)
     | .ok req =>
       let (resp, st) ← h req
+      return (encode resp, st)
+
+/-- Typed unary register with `ServerCallContext`. -/
+def registerTypedWithContext (s : Server) (service method : String)
+    (decode : ByteArray → Except String α) (encode : β → ByteArray)
+    (h : ServerCallContext → α → IO (β × Status)) : Server :=
+  registerWithContext s service method fun ctx reqBytes => do
+    match decode reqBytes with
+    | .error e => return (ByteArray.empty, Status.invalidArgument e)
+    | .ok req =>
+      let (resp, st) ← h ctx req
       return (encode resp, st)
 
 /-- Typed server-streaming register (still batch: one request → array of responses). -/
@@ -110,6 +130,16 @@ private def headerAscii (h : Hpack.HeaderField) : String × String :=
   (String.ofList (h.name.toList.map (fun b => Char.ofNat b.toNat)),
    String.ofList (h.value.toList.map (fun b => Char.ofNat b.toNat)))
 
+/-- Collect non-pseudo request headers into `Metadata` (HTTP/2 names are lowercased). -/
+private def metadataFromHeaders (headers : Array Hpack.HeaderField) : Metadata :=
+  Id.run do
+    let mut m := Metadata.empty
+    for h in headers do
+      let (n, v) := headerAscii h
+      if !n.startsWith ":" then
+        m := m.add n v
+    return m
+
 /-- Deprecated alias — use `Metadata.parseTimeoutMs`. -/
 def parseTimeoutMs (t : String) : Option Nat := Metadata.parseTimeoutMs t
 
@@ -119,9 +149,11 @@ private def encodeManyIO (msgs : Array ByteArray) (alg : Compression.Algorithm) 
     out := Bytes.Pool.pushBytes out (← Message.encodeIO m alg)
   return out
 
-/-- Build the transport-agnostic `H2.StreamHandler` for `s`, shared by the
-    plaintext (`serveH2c`) and TLS (`serveTls`) entry points below. -/
-def handlerFor (s : Server) : H2.StreamHandler := fun _streamId headers data endStream headersSent => do
+/-- Build the transport-agnostic `H2.StreamHandler` for `s`.
+    `peerIdentity` is connection-scoped (from mTLS); `mtlsRequired` is true when
+    the listener was configured with `clientCaPath`. -/
+def handlerFor (s : Server) (peerIdentity : Option PeerIdentity := none)
+    (mtlsRequired : Bool := false) : H2.StreamHandler := fun _streamId headers data endStream headersSent => do
     if headersSent && !endStream && data.isEmpty then
       return { finished := false }
     -- Resolve path early so incremental bidi can respond before half-close.
@@ -202,10 +234,16 @@ def handlerFor (s : Server) : H2.StreamHandler := fun _streamId headers data end
       let mut respHeaders := Metadata.http200
       if respAlg != .identity then
         respHeaders := respHeaders.push (Metadata.grpcEncoding respAlg.name)
+      let ctx : ServerCallContext := {
+        peerIdentity
+        metadata := metadataFromHeaders headers
+        methodPath := path
+        mtlsRequired
+      }
       match mh with
       | .unary h =>
         let req := payloads.getD 0 ByteArray.empty
-        let (resp, st) ← h req
+        let (resp, st) ← h ctx req
         let body ←
           if st.code != .ok && resp.isEmpty then pure ByteArray.empty
           else Message.encodeIO resp respAlg
@@ -265,12 +303,14 @@ def handlerFor (s : Server) : H2.StreamHandler := fun _streamId headers data end
           }
 
 def serveH2c (s : Server) (cfg : H2.ServerConfig := {}) : IO Unit :=
-  H2.Server.listen cfg (handlerFor s)
+  H2.Server.listen cfg (handlerFor s none false)
 
 /-- Serve with in-process TLS+ALPN `h2` (see `Grpc.Tls.serveH2` for the
-    plaintext/mTLS decision based on `tlsCfg`). -/
+    plaintext/mTLS decision based on `tlsCfg`). Peer identity is extracted per
+    accepted connection and threaded into unary context handlers. -/
 def serveTls (s : Server) (tlsCfg : Tls.Config) (cfg : H2.ServerConfig := {}) : IO Unit :=
-  Tls.serveH2 tlsCfg cfg (handlerFor s)
+  let mtlsRequired := tlsCfg.clientCaPath.isSome
+  Tls.serveH2 tlsCfg cfg fun peerId => handlerFor s peerId mtlsRequired
 
 end Server
 end Grpc

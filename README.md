@@ -6,7 +6,7 @@
 
 General-purpose **Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
 
-Standalone Lake package (**1.0.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
+Standalone Lake package (**1.1.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
 
 **Docs:** [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc) (curated) · [docs/](docs/README.md) (full in-repo index)
 
@@ -20,7 +20,7 @@ In your `lakefile.lean`:
 
 ```lean
 require «lean-grpc» from git
-  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.0.0"
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.1.0"
 ```
 
 Then `import Grpc`. After Reservoir lists the package you can use `require «lean-grpc»` without a git URL. Packaging details and the maintainer release checklist: [docs/packaging.md](docs/packaging.md).
@@ -42,7 +42,7 @@ Then `import Grpc`. After Reservoir lists the package you can use `require «lea
 | [Formal proofs](docs/proofs.md) | Compile-time theorems for pure codecs |
 | [TLS / Envoy](docs/tls-envoy.md) | In-process OpenSSL and sidecars |
 | [CHANGELOG](CHANGELOG.md) | Version history |
-| [ROADMAP](ROADMAP.md) | What v1.0.0 shipped vs open proof/hardening follow-ups |
+| [ROADMAP](ROADMAP.md) | What v1.1.0 shipped vs open proof/hardening follow-ups |
 | [CONTRIBUTING](CONTRIBUTING.md) | Dev setup and PR expectations |
 | [SECURITY](SECURITY.md) | Vulnerability reporting (`security@rileybetts.ai`) |
 | [Code of Conduct](CODE_OF_CONDUCT.md) | Community standards |

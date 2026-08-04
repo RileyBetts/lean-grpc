@@ -8,10 +8,13 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <openssl/bio.h>
+#include <openssl/bn.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -370,6 +373,138 @@ LEAN_EXPORT lean_obj_res lean_grpc_tls_close(b_lean_obj_arg conn_obj, lean_obj_a
     SSL_shutdown(c->ssl);
   }
   return lean_io_result_mk_ok(lean_box(0));
+}
+
+static lean_object *mk_string_n(const char *s, size_t n) {
+  return lean_mk_string_from_bytes(s, n);
+}
+
+static lean_object *mk_string_cstr(const char *s) {
+  return lean_mk_string(s ? s : "");
+}
+
+static void hex_encode(const unsigned char *in, size_t n, char *out) {
+  static const char *hex = "0123456789abcdef";
+  for (size_t i = 0; i < n; ++i) {
+    out[i * 2] = hex[(in[i] >> 4) & 0xf];
+    out[i * 2 + 1] = hex[in[i] & 0xf];
+  }
+  out[n * 2] = '\0';
+}
+
+static lean_object *array_push_str(lean_object *arr, const char *s, size_t n) {
+  return lean_array_push(arr, mk_string_n(s, n));
+}
+
+/* Extract verified peer certificate identity into Grpc.PeerIdentity (6 String/Array fields).
+   Returns Option.none when no peer certificate is present. */
+LEAN_EXPORT lean_obj_res lean_grpc_tls_peer_identity(b_lean_obj_arg conn_obj, lean_obj_arg world) {
+  (void)world;
+  lean_grpc_ssl_conn *c = (lean_grpc_ssl_conn *)lean_get_external_data(conn_obj);
+  if (!c || !c->ssl) return lean_io_result_mk_ok(lean_box(0)); /* none */
+  X509 *cert = SSL_get_peer_certificate(c->ssl);
+  if (!cert) return lean_io_result_mk_ok(lean_box(0)); /* none */
+
+  lean_object *subject_dn = mk_string_cstr("");
+  lean_object *common_name = mk_string_cstr("");
+  lean_object *dns_sans = lean_mk_empty_array();
+  lean_object *uri_sans = lean_mk_empty_array();
+  lean_object *fp_hex = mk_string_cstr("");
+  lean_object *serial_hex = mk_string_cstr("");
+
+  /* Subject DN — RFC 2253 */
+  {
+    BIO *bio = BIO_new(BIO_s_mem());
+    if (bio) {
+      if (X509_NAME_print_ex(bio, X509_get_subject_name(cert), 0, XN_FLAG_RFC2253) >= 0) {
+        char *p = NULL;
+        long len = BIO_get_mem_data(bio, &p);
+        if (p && len > 0) {
+          lean_dec(subject_dn);
+          subject_dn = mk_string_n(p, (size_t)len);
+        }
+      }
+      BIO_free(bio);
+    }
+  }
+
+  /* Common Name */
+  {
+    char cn[256];
+    int n = X509_NAME_get_text_by_NID(X509_get_subject_name(cert), NID_commonName, cn, (int)sizeof(cn));
+    if (n > 0) {
+      lean_dec(common_name);
+      common_name = mk_string_n(cn, (size_t)n);
+    }
+  }
+
+  /* DNS / URI SANs */
+  {
+    GENERAL_NAMES *sans = (GENERAL_NAMES *)X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
+    if (sans) {
+      int count = sk_GENERAL_NAME_num(sans);
+      for (int i = 0; i < count; ++i) {
+        GENERAL_NAME *gn = sk_GENERAL_NAME_value(sans, i);
+        if (!gn) continue;
+        ASN1_STRING *as = NULL;
+        if (gn->type == GEN_DNS)
+          as = gn->d.dNSName;
+        else if (gn->type == GEN_URI)
+          as = gn->d.uniformResourceIdentifier;
+        if (!as) continue;
+        const unsigned char *data = ASN1_STRING_get0_data(as);
+        int len = ASN1_STRING_length(as);
+        if (!data || len <= 0) continue;
+        if (gn->type == GEN_DNS)
+          dns_sans = array_push_str(dns_sans, (const char *)data, (size_t)len);
+        else
+          uri_sans = array_push_str(uri_sans, (const char *)data, (size_t)len);
+      }
+      GENERAL_NAMES_free(sans);
+    }
+  }
+
+  /* SHA-256 fingerprint of DER cert */
+  {
+    unsigned char md[EVP_MAX_MD_SIZE];
+    unsigned int md_len = 0;
+    if (X509_digest(cert, EVP_sha256(), md, &md_len) == 1 && md_len > 0) {
+      char hex[EVP_MAX_MD_SIZE * 2 + 1];
+      hex_encode(md, md_len, hex);
+      lean_dec(fp_hex);
+      fp_hex = mk_string_cstr(hex);
+    }
+  }
+
+  /* Serial number (hex) */
+  {
+    const ASN1_INTEGER *ser = X509_get0_serialNumber(cert);
+    BIGNUM *bn = ser ? ASN1_INTEGER_to_BN(ser, NULL) : NULL;
+    if (bn) {
+      char *hex = BN_bn2hex(bn);
+      if (hex) {
+        lean_dec(serial_hex);
+        serial_hex = mk_string_cstr(hex);
+        OPENSSL_free(hex);
+      }
+      BN_free(bn);
+    }
+  }
+
+  X509_free(cert);
+
+  /* PeerIdentity structure: 6 object fields */
+  lean_object *id = lean_alloc_ctor(0, 6, 0);
+  lean_ctor_set(id, 0, subject_dn);
+  lean_ctor_set(id, 1, common_name);
+  lean_ctor_set(id, 2, dns_sans);
+  lean_ctor_set(id, 3, uri_sans);
+  lean_ctor_set(id, 4, fp_hex);
+  lean_ctor_set(id, 5, serial_hex);
+
+  lean_object *some = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(some, 0, id);
+  return lean_io_result_mk_ok(some);
 }
 
 /* ---- ADC helpers (Phase 2) ---- */

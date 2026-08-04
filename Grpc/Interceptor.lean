@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Grpc.Server
 import Grpc.Channel
+import Grpc.PeerIdentity
 
 /-! # Client/server interceptor chains for unary calls.
 
@@ -26,6 +27,27 @@ def applyServer (service method : String) (chain : Array ServerUnary) (base : Un
 def registerUnary (s : Server) (service method : String) (chain : Array ServerUnary)
     (h : UnaryHandler) : Server :=
   Server.register s service method (applyServer service method chain h)
+
+/-- Context-aware server unary interceptor. -/
+abbrev ServerUnaryWithContext :=
+  String → String → UnaryHandlerWithContext → UnaryHandlerWithContext
+
+/-- Fold a chain of context-aware server interceptors around `base`, outermost-first. -/
+def applyServerWithContext (service method : String) (chain : Array ServerUnaryWithContext)
+    (base : UnaryHandlerWithContext) : UnaryHandlerWithContext :=
+  chain.foldr (fun mw next => mw service method next) base
+
+/-- Register a context-aware unary method wrapped with `chain`. -/
+def registerUnaryWithContext (s : Server) (service method : String)
+    (chain : Array ServerUnaryWithContext) (h : UnaryHandlerWithContext) : Server :=
+  Server.registerWithContext s service method (applyServerWithContext service method chain h)
+
+/-- Fail closed under mTLS: when `ctx.mtlsRequired` and `peerIdentity` is missing, return
+    `UNAUTHENTICATED` instead of invoking `next`. -/
+def requirePeerIdentity : ServerUnaryWithContext := fun _service _method next ctx req => do
+  if ctx.mtlsRequired && ctx.peerIdentity.isNone then
+    return (ByteArray.empty, Status.unauthenticated "mtls_required")
+  next ctx req
 
 /-- Client-side unary invoker: request bytes → `CallResult` (matches `Channel.unary`'s core
     shape, modulo the extra dialing options `Channel.unary` takes). -/
