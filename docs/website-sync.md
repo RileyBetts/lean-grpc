@@ -36,7 +36,7 @@ stay aligned with `README.md` / `SECURITY.md` here.
 1. Polish / merge lean-grpc docs on `development` → `main`.
 2. Promote website pages; stage then production deploy.
 3. Ensure the GitHub repo is public, Apache-2.0 detected, Security Advisories on, ≥2 stars.
-4. Maintainer tags `v1.0.0` manually (see [packaging.md](packaging.md)).
+4. Maintainer tags `v1.1.0` manually (see [packaging.md](packaging.md)).
 5. Wait for Reservoir’s daily crawl; verify the package page and homepage link.
 6. Prefer bare `require «lean-grpc»` in README/site copy once indexed.
 

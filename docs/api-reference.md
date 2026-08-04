@@ -1,6 +1,6 @@
 # API reference
 
-Lean module catalogue for consumers. Signatures are summarized; see source under `Grpc/`, `H2/`, `Proto/` for full definitions. Version string: `Grpc.version` (currently `1.0.0`).
+Lean module catalogue for consumers. Signatures are summarized; see source under `Grpc/`, `H2/`, `Proto/` for full definitions. Version string: `Grpc.version` (currently `1.1.0`).
 
 Import umbrella: `import Grpc` (pulls status, channel, server, credentials, TLS, xDS, ops, etc.). Add `import Proto` for bundled message codecs.
 
@@ -87,23 +87,42 @@ Low-level unary on an `H2.ClientConn` (scheme http/https, user-agent, compressio
 Unary middleware:
 
 - `registerUnary` / `callUnary`
+- `registerUnaryWithContext` / `applyServerWithContext`
 - `applyServer` / `applyClient`
-- Built-ins: `loggingServer`, `loggingClient`
+- Built-ins: `loggingServer`, `loggingClient`, `loggingServerWithContext`, `requirePeerIdentity`, `bearerMetadata`
 
 ---
 
 ## Server
+
+### `Grpc.PeerIdentity` / `Grpc.ServerCallContext`
+
+Verified mTLS peer certificate identity (OpenSSL; subject DN is **RFC 2253**):
+
+| Field | Notes |
+|---|---|
+| `subjectDn` | Full subject DN |
+| `commonName` | CN if present; else empty |
+| `dnsSans` / `uriSans` | SAN lists (URI SANs for SPIFFE-style IDs) |
+| `fingerprintSha256` | Hex SHA-256 of DER cert |
+| `serial` | Hex serial |
+
+`ServerCallContext`: `peerIdentity`, inbound `metadata` (non-pseudo headers), `methodPath`, `mtlsRequired`.
+
+`Grpc.Native.Tls.peerIdentity?` extracts identity from an accepted TLS connection.
 
 ### `Grpc.Server`
 
 | API | Purpose |
 |---|---|
 | `empty` | Empty registry |
-| `register` | Unary `ByteArray → IO (ByteArray × Status)` |
-| `registerServerStream` / `registerClientStream` / `registerBidi` | Streaming (raw bytes) |
-| `registerTyped` / `registerServerStreamTyped` / `registerClientStreamTyped` / `registerBidiTyped` | Streaming/unary with decode/encode adapters |
-| `serveH2c` | Listen h2c |
-| `serveTls` | Listen TLS+ALPN (via `Tls.Config`) |
+| `register` | Unary `ByteArray → IO (ByteArray × Status)` (ignores context) |
+| `registerWithContext` | Unary with `ServerCallContext` (peer identity + metadata) |
+| `registerTyped` / `registerTypedWithContext` | Typed unary adapters |
+| `registerServerStream` / `registerClientStream` / `registerBidi` | Streaming (raw bytes; context deferred) |
+| `registerServerStreamTyped` / `registerClientStreamTyped` / `registerBidiTyped` | Streaming with decode/encode adapters |
+| `serveH2c` | Listen h2c (`peerIdentity = none`) |
+| `serveTls` | Listen TLS+ALPN; per-connection peer identity → context handlers |
 | `maxMsgSize` | Inbound limit |
 
 Bad `content-type` → HTTP **415**. Unknown method / zero timeout → trailers-only gRPC status.
@@ -131,7 +150,8 @@ Bad `content-type` → HTTP **415**. Unknown method / zero timeout → trailers-
 `certPath`, `keyPath`, `caPath`, `clientCaPath`, `serverName`, `alpn` (default `["h2"]`).
 
 - Client mTLS: set `certPath` + `keyPath`
-- Server mTLS: set `clientCaPath` on serve
+- Server mTLS: set `clientCaPath` on serve — verified peer identity is available via `registerWithContext` / `ServerCallContext.peerIdentity`
+- `Tls.serveH2` takes `mkHandler : Option PeerIdentity → H2.StreamHandler`; failed accepts/handshakes are logged and the listen loop continues
 
 Env: `LEAN_GRPC_TLS_PROXY`, `LEAN_GRPC_TLS_INSECURE_FALLBACK=1` (dev only).
 

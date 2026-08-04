@@ -1,6 +1,6 @@
 # Roadmap
 
-lean-grpc **v1.0.0** is the current package tip (Lake / `Grpc.version`, git tag `v1.0.0`): an interop-tested Lean 4 gRPC stack with a CI-gated **`Proofs`** library for selected pure codecs. It is **not** a machine-checked end-to-end PROTOCOL-HTTP2 / TLS / session proof, and it does **not** yet meet every item that earlier drafts listed under “v1.0.0 complete.”
+lean-grpc **v1.1.0** is the current package tip (Lake / `Grpc.version`): an interop-tested Lean 4 gRPC stack with a CI-gated **`Proofs`** library for selected pure codecs, plus additive mTLS peer-identity / request-context APIs for enterprise AuthN. It is **not** a machine-checked end-to-end PROTOCOL-HTTP2 / TLS / session proof.
 
 This document records what shipped, what is still open, and the next proof/hardening tranches.
 
@@ -25,6 +25,17 @@ First public packaging baseline (interop + Lake/Reservoir layout). Formal Lean p
 | Dial / LB / retry, health, reflection, channelz | Present; ops demos gated |
 | ADC / xDS ADS | Mock / FakeAds CI; live Google paths allowlisted |
 
+## Shipped — v1.1.0 (IAM)
+
+Additive server AuthN plumbing for verified mTLS peer identity (see [feature/lean-grpc-iam-requirements.md](feature/lean-grpc-iam-requirements.md), [docs/cookbook-interceptors.md](docs/cookbook-interceptors.md)).
+
+| Included | Deferred |
+|---|---|
+| Native peer cert extract (DN/CN/SANs/fingerprint) | Streaming handlers with `ServerCallContext` |
+| `registerWithContext` / `ServerCallContext` | Trusted-proxy identity mode |
+| Dual-cert + metadata non-forgery loopback tests | JWT/OIDC validation inside lean-grpc |
+| Accept-loop continues after failed TLS handshake | Full SPIFFE/SPIRE workload API |
+
 ## Shipped — v1.0.0 (honest scope)
 
 Product/packaging release with **selected** compile-time proofs. See [docs/proofs.md](docs/proofs.md).
@@ -40,7 +51,7 @@ Product/packaging release with **selected** compile-time proofs. See [docs/proof
 
 **Explicit non-goals (unchanged):** ALTS / GCE channel credentials, HTTP CONNECT proxying, full `cacheable_unary` proxy infrastructure, end-to-end session proofs.
 
-## Toward v1.1.x / later
+## Toward v1.2.x / later
 
 Work is grouped so each tranche can ship as a minor release without waiting for a full ConnState + Huffman proof stack.
 
@@ -75,6 +86,7 @@ Close remaining audit follow-ups so later minors are not “proved but soft”:
 - Keep README / SECURITY honesty: “executable + interop CI + *selected* Lean proofs; FFI trusted”
 - Reservoir indexing polish ([docs/packaging.md](docs/packaging.md); hosted docs at [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc))
 - Allowlists remain unless separately delivered (ALTS, live ADC, CONNECT)
+- Streaming `ServerCallContext` (parity with unary IAM)
 
 ### D — Nice-to-have (not blockers)
 
@@ -87,24 +99,25 @@ Close remaining audit follow-ups so later minors are not “proved but soft”:
 ## Milestone sketch
 
 ```text
-v0.5.0 ──► v1.0.0              ──► v1.1.x              ──► v1.2.x
- shipped     interop +           ConnState +            Huffman trie /
-             selected Proofs     general frame/msg      bootstrap JSON /
-             (CI) + provenance   roundtrips             fuzz seeds
-                                 (fixtures → ∀)
+v0.5.0 ──► v1.0.0              ──► v1.1.0              ──► v1.2.x
+ shipped     interop +           mTLS peer identity +   ConnState +
+             selected Proofs     ServerCallContext      general frame/msg
+             (CI) + provenance   (unary IAM)            roundtrips /
+                                                        Huffman trie
 ```
 
 Dates are intentionally omitted; order matters more than calendar.
 
 ## What versions mean
 
-| Claim | v1.0.0 | Later 1.x target |
-|---|---|---|
-| Interop-tested general-purpose gRPC over h2c/TLS | **Yes** | Maintain |
-| Selected critical pure codecs machine-checked in Lean | **Yes** (partial; see [docs/proofs.md](docs/proofs.md)) | Broaden ∀ coverage |
-| `H2.ConnState` properties machine-checked | **No** | Yes (P1) |
-| Full PROTOCOL-HTTP2 / gRPC / TLS stack proved | **No** | **No** (non-goal) |
-| ALTS / live Google control plane | **No** (allowlisted) | Unless separately delivered |
+| Claim | v1.0.0 | v1.1.0 | Later 1.x target |
+|---|---|---|---|
+| Interop-tested general-purpose gRPC over h2c/TLS | **Yes** | Maintain | Maintain |
+| mTLS verified peer identity in unary handlers | **No** | **Yes** | Streaming context |
+| Selected critical pure codecs machine-checked in Lean | **Yes** (partial; see [docs/proofs.md](docs/proofs.md)) | Maintain | Broaden ∀ coverage |
+| `H2.ConnState` properties machine-checked | **No** | **No** | Yes (P1) |
+| Full PROTOCOL-HTTP2 / gRPC / TLS stack proved | **No** | **No** | **No** (non-goal) |
+| ALTS / live Google control plane | **No** (allowlisted) | **No** | Unless separately delivered |
 
 ## How to contribute
 

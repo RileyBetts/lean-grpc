@@ -5,6 +5,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 import H2
 import Grpc.Resolver
 import Grpc.Native.Tls
+import Grpc.PeerIdentity
 
 namespace Grpc.Tls
 
@@ -57,8 +58,13 @@ def connectH2 (host : String) (port : UInt16) (cfg : Config := {}) : IO H2.Clien
     H2.Client.connectTransport (Grpc.Native.Tls.transport conn)
 
 /-- Serve with in-process TLS+ALPN when cert/key are set; otherwise h2c (+ optional sidecar).
-    TLS listen binds loopback only (see native `INADDR_LOOPBACK`). -/
-partial def serveH2 (cfg : Config) (h2cfg : H2.ServerConfig) (handler : H2.StreamHandler) : IO Unit := do
+    TLS listen binds loopback only (see native `INADDR_LOOPBACK`).
+
+    `mkHandler` receives the verified peer identity for each accepted connection
+    (`none` when the client presented no certificate). Failed accepts/handshakes
+    are logged and the listen loop continues. -/
+partial def serveH2 (cfg : Config) (h2cfg : H2.ServerConfig)
+    (mkHandler : Option PeerIdentity → H2.StreamHandler) : IO Unit := do
   match cfg.certPath, cfg.keyPath with
   | some cert, some key =>
     let clientCa := (cfg.clientCaPath.map (·.toString)).getD ""
@@ -66,17 +72,26 @@ partial def serveH2 (cfg : Config) (h2cfg : H2.ServerConfig) (handler : H2.Strea
     let mtlsNote := if cfg.clientCaPath.isSome then " (mTLS: client cert required)" else ""
     IO.println s!"H2 TLS+ALPN listening on 127.0.0.1:{h2cfg.port}{mtlsNote}"
     while true do
-      let conn ← Grpc.Native.Tls.accept listener
-      discard <| IO.asTask (prio := .dedicated) do
+      let acceptResult ←
         try
-          H2.serveTransport (Grpc.Native.Tls.transport conn) handler
+          pure (Sum.inl (← Grpc.Native.Tls.accept listener))
         catch e =>
-          IO.eprintln s!"tls conn error: {e}"
+          pure (Sum.inr e)
+      match acceptResult with
+      | .inr e =>
+        IO.eprintln s!"tls accept error: {e}"
+      | .inl conn =>
+        let peerId ← Grpc.Native.Tls.peerIdentity? conn
+        discard <| IO.asTask (prio := .dedicated) do
+          try
+            H2.serveTransport (Grpc.Native.Tls.transport conn) (mkHandler peerId)
+          catch e =>
+            IO.eprintln s!"tls conn error: {e}"
   | _, _ =>
     match ← IO.getEnv "LEAN_GRPC_TLS_INSECURE_FALLBACK" with
-    | some "1" => H2.Server.listen h2cfg handler
+    | some "1" => H2.Server.listen h2cfg (mkHandler none)
     | _ =>
       IO.eprintln s!"Tls.serveH2: serving h2c on {h2cfg.host}:{h2cfg.port}; set certPath/keyPath for in-process TLS, or use sidecar. {envoySidecarNotes}"
-      H2.Server.listen h2cfg handler
+      H2.Server.listen h2cfg (mkHandler none)
 
 end Grpc.Tls
