@@ -16,9 +16,39 @@ lake build
 
 ## Branching
 
-- `main` — stable releases / published tip  
-- `development` — integration branch  
-- Feature work: branch from `development` (e.g. `feature/…`)
+Flow: **`feature/…` → `development` → `main`**. GitHub rulesets require a pull request (and green CI) into `development` and `main`. Direct pushes to those branches are not part of the workflow.
+
+| Branch | Role |
+|---|---|
+| `feature/…` | All implementation work (branch from latest `development`) |
+| `development` | Integration / staging tip — **PR only** from `feature/…` |
+| `main` | Stable / published tip — **PR only** from `development` |
+| tags `v*` | Releases — created on `main` only (see [packaging.md](docs/packaging.md)) |
+
+### How to land a change
+
+```bash
+git fetch origin
+git checkout development && git pull origin development
+git checkout -b feature/<short-name>
+# … commit …
+git push -u origin HEAD
+gh pr create --base development --title "…" --body "…"
+```
+
+1. Wait for CI on the feature PR (`build-test`, `stress-framing`, `interop-grpc-go`, `interop-python`, `interop-rust`, `h2spec`).
+2. Merge into `development`.
+3. When ready to publish the tip, open **`development` → `main`** (prefer a merge that keeps `main` a clean promote of `development`; squash only for a single logical promote if needed).
+4. Tag releases from `main` only — maintainers, manually ([packaging.md](docs/packaging.md)).
+
+### Do not
+
+- Open PRs from `feature/*` directly into `main`
+- Commit or push straight to `main` or `development`
+- Force-push `main` or `development`
+- Create or push release tags from agents/CI
+
+Agents and humans follow the same path.
 
 Release / Reservoir checklist (tagging is **manual**): [docs/packaging.md](docs/packaging.md).
 
@@ -114,10 +144,11 @@ User docs live under [`docs/`](docs/README.md) (source of truth). Curated pages 
 
 ## Pull requests
 
-1. Clear description of *why* and how to test.
-2. Green CI on the PR branch.
-3. No unrelated refactors.
-4. Do not force-push `main` / `development` unless maintainers ask.
+1. Base branch must be **`development`** for feature work (never `main`).
+2. Clear description of *why* and how to test.
+3. Green CI on the PR branch.
+4. No unrelated refactors.
+5. Do not force-push `main` / `development`.
 
 ## License
 
