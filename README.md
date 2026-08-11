@@ -6,9 +6,9 @@
 
 General-purpose **Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing over `Std.Async.TCP`.
 
-Standalone Lake package (**1.2.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
+Standalone Lake package (**1.3.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
 
-**Async model:** sockets are `Std.Async.TCP`. Through v1.1.x the public API was blocking `IO` via `.block`. **v1.2.0** adds a native Async h2c path (`serveH2cAsync` / `unaryAsync`) with **zero** `.block` on accept/connect/send/recv; existing IO APIs remain as explicit sync adapters. In-process TLS is still blocking OpenSSL FFI — see [docs/async-io.md](docs/async-io.md).
+**Async model:** sockets are `Std.Async.TCP`. **v1.2.0** added a native Async h2c path (`serveH2cAsync` / `unaryAsync`) with **zero** `.block` on accept/connect/send/recv. **v1.3.0** runs blocking OpenSSL on dedicated threads (`connectH2Async` / `serveTlsAsync` / `ofBlockingOffLoop`) so TLS does not stall the UV loop — still not nonblocking BIO; see [docs/async-io.md](docs/async-io.md).
 
 **Docs:** [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc) (curated) · [docs/](docs/README.md) (full in-repo index)
 
@@ -22,7 +22,7 @@ In your `lakefile.lean`:
 
 ```lean
 require «lean-grpc» from git
-  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.2.0"
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.3.0"
 ```
 
 Then `import Grpc`. After Reservoir lists the package you can use `require «lean-grpc»` without a git URL. Packaging details and the maintainer release checklist: [docs/packaging.md](docs/packaging.md).

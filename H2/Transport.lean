@@ -28,11 +28,24 @@ def tcpTransportAsync (sock : TCP.Socket.Client) : AsyncByteTransport where
   close := pure ()
 
 /-- Lift blocking `IO` send/recv into `Async` (still blocks the UV thread while
-    the IO runs — used for OpenSSL FFI transports in v1.2.0). -/
+    the IO runs). Prefer `ofBlockingOffLoop` for OpenSSL / other blocking FFI. -/
 def AsyncByteTransport.ofBlocking (t : ByteTransport) : AsyncByteTransport where
   send := fun b => liftM (t.send b)
   recv? := fun n => liftM (t.recv? n)
   close := liftM t.close
+
+/-- Run blocking `IO` on a dedicated thread, then resume the Async waiter.
+    Keeps `SSL_read` / `SSL_write` / similar FFI off the UV loop (issue #10). -/
+def runOffLoop (act : IO α) (prio := Task.Priority.dedicated) : Async α := do
+  let t ← IO.asTask act prio
+  Async.ofAsyncTask t
+
+/-- Lift blocking `IO` send/recv into `Async` without stalling the UV loop:
+    each op runs on a dedicated task (off-loop OpenSSL model for v1.3.0). -/
+def AsyncByteTransport.ofBlockingOffLoop (t : ByteTransport) : AsyncByteTransport where
+  send := fun b => runOffLoop (t.send b)
+  recv? := fun n => runOffLoop (t.recv? n)
+  close := runOffLoop t.close
 
 /-- Sync facade: each op `.block`s the underlying async transport. -/
 def ByteTransport.ofAsync (t : AsyncByteTransport) : ByteTransport where

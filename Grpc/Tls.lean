@@ -6,6 +6,9 @@ import H2
 import Grpc.Resolver
 import Grpc.Native.Tls
 import Grpc.PeerIdentity
+import Std.Async
+
+open Std.Async
 
 namespace Grpc.Tls
 
@@ -33,10 +36,21 @@ structure Config where
 def envoySidecarNotes : String :=
   "Optional: terminate TLS at Envoy/Caddy with alpn_protocols: [h2], cluster to 127.0.0.1:<lean-h2c-port>."
 
-/-- Connect with TLS+ALPN `h2`.
+/-- In-process OpenSSL dial (blocking). Used by sync `connectH2`. -/
+private def dialInProcess (host : String) (port : UInt16) (cfg : Config) : IO H2.ClientConn := do
+  if cfg.insecureSkipVerify then
+    IO.eprintln "WARN: Tls.Config.insecureSkipVerify=true → peer certificate not verified"
+  let ca := (cfg.caPath.map (·.toString)).getD ""
+  let sni := cfg.serverName.getD host
+  let clientCert := (cfg.certPath.map (·.toString)).getD ""
+  let clientKey := (cfg.keyPath.map (·.toString)).getD ""
+  let conn ← Grpc.Native.Tls.dial host port ca sni clientCert clientKey cfg.insecureSkipVerify
+  H2.Client.connectTransport (Grpc.Native.Tls.transport conn)
+
+/-- Connect with TLS+ALPN `h2` (blocking `IO`; safe under `IO.asTask`).
     Priority:
     1. `LEAN_GRPC_TLS_PROXY` — h2c to local sidecar/proxy (legacy).
-    2. In-process OpenSSL (system CA / `caPath` + hostname verify unless `insecureSkipVerify`).
+    2. In-process OpenSSL.
     3. `LEAN_GRPC_TLS_INSECURE_FALLBACK=1` — plain h2c (dev only). -/
 def connectH2 (host : String) (port : UInt16) (cfg : Config := {}) : IO H2.ClientConn := do
   if let some proxy := ← IO.getEnv "LEAN_GRPC_TLS_PROXY" then
@@ -48,21 +62,66 @@ def connectH2 (host : String) (port : UInt16) (cfg : Config := {}) : IO H2.Clien
     IO.eprintln "WARN: LEAN_GRPC_TLS_INSECURE_FALLBACK=1 → h2c (no TLS)"
     H2.Client.connectH2c host port
   | _ =>
+    dialInProcess host port cfg
+
+/-- Connect with TLS+ALPN `h2` under `Std.Async` (off-loop OpenSSL).
+    Blocking dial/handshake/preface run on dedicated threads — not nonblocking BIO. -/
+def connectH2Async (host : String) (port : UInt16) (cfg : Config := {}) : Async H2.ClientConn := do
+  if let some proxy := ← IO.getEnv "LEAN_GRPC_TLS_PROXY" then
+    let addr ← IO.ofExcept (Resolver.parseTarget proxy)
+    IO.eprintln s!"Tls.connectH2Async via LEAN_GRPC_TLS_PROXY={proxy} (ALPN terminated externally)"
+    return (← H2.Client.connectH2cAsync addr.host addr.port)
+  match ← IO.getEnv "LEAN_GRPC_TLS_INSECURE_FALLBACK" with
+  | some "1" =>
+    IO.eprintln "WARN: LEAN_GRPC_TLS_INSECURE_FALLBACK=1 → h2c (no TLS)"
+    H2.Client.connectH2cAsync host port
+  | _ => do
     if cfg.insecureSkipVerify then
       IO.eprintln "WARN: Tls.Config.insecureSkipVerify=true → peer certificate not verified"
     let ca := (cfg.caPath.map (·.toString)).getD ""
     let sni := cfg.serverName.getD host
     let clientCert := (cfg.certPath.map (·.toString)).getD ""
     let clientKey := (cfg.keyPath.map (·.toString)).getD ""
-    let conn ← Grpc.Native.Tls.dial host port ca sni clientCert clientKey cfg.insecureSkipVerify
-    H2.Client.connectTransport (Grpc.Native.Tls.transport conn)
+    let conn ← H2.runOffLoop
+      (Grpc.Native.Tls.dial host port ca sni clientCert clientKey cfg.insecureSkipVerify)
+    H2.Client.connectTransportOffLoopAsync (Grpc.Native.Tls.transport conn)
 
-/-- Serve with in-process TLS+ALPN when cert/key are set; otherwise h2c (+ optional sidecar).
-    TLS listen binds loopback only (see native `INADDR_LOOPBACK`).
+/-- Serve with in-process TLS+ALPN under `Std.Async`. Accept/handshake run off-loop;
+    each connection is a dedicated background fiber with blocking SSL I/O. -/
+partial def serveH2Async (cfg : Config) (h2cfg : H2.ServerConfig)
+    (mkHandler : Option PeerIdentity → H2.StreamHandler) : Async Unit := do
+  match cfg.certPath, cfg.keyPath with
+  | some cert, some key =>
+    let clientCa := (cfg.clientCaPath.map (·.toString)).getD ""
+    let listener ← H2.runOffLoop
+      (Grpc.Native.Tls.listen h2cfg.port cert.toString key.toString clientCa)
+    let mtlsNote := if cfg.clientCaPath.isSome then " (mTLS: client cert required)" else ""
+    IO.println s!"H2 TLS+ALPN listening on 127.0.0.1:{h2cfg.port}{mtlsNote} (Async off-loop)"
+    while true do
+      let acceptResult ←
+        try
+          pure (Sum.inl (← H2.runOffLoop (Grpc.Native.Tls.accept listener)))
+        catch e =>
+          pure (Sum.inr e)
+      match acceptResult with
+      | .inr e =>
+        IO.eprintln s!"tls accept error: {e}"
+      | .inl conn =>
+        let peerId ← H2.runOffLoop (Grpc.Native.Tls.peerIdentity? conn)
+        background (prio := Task.Priority.dedicated) do
+          try
+            liftM (H2.serveTransport (Grpc.Native.Tls.transport conn) (mkHandler peerId))
+          catch e =>
+            IO.eprintln s!"tls conn error: {e}"
+  | _, _ =>
+    match ← IO.getEnv "LEAN_GRPC_TLS_INSECURE_FALLBACK" with
+    | some "1" => H2.Server.listenAsync h2cfg (mkHandler none)
+    | _ =>
+      IO.eprintln s!"Tls.serveH2Async: serving h2c on {h2cfg.host}:{h2cfg.port}; set certPath/keyPath for in-process TLS, or use sidecar. {envoySidecarNotes}"
+      H2.Server.listenAsync h2cfg (mkHandler none)
 
-    `mkHandler` receives the verified peer identity for each accepted connection
-    (`none` when the client presented no certificate). Failed accepts/handshakes
-    are logged and the listen loop continues. -/
+/-- Serve with in-process TLS+ALPN (blocking `IO` accept loop; per-conn `IO.asTask`).
+    Does not go through `Async.block` — safe when the process is dedicated to serving. -/
 partial def serveH2 (cfg : Config) (h2cfg : H2.ServerConfig)
     (mkHandler : Option PeerIdentity → H2.StreamHandler) : IO Unit := do
   match cfg.certPath, cfg.keyPath with

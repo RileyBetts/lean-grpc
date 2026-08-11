@@ -61,7 +61,7 @@ Health, reflection, and channelz are ordinary registered methods (`Grpc.Health`,
 
 - Plain TCP Async (`H2.Client.connectH2cAsync`, `H2.Server.listenH2cAsync`) — **no** `.block` on the Async chain
 - Plain TCP sync adapters (`connectH2c`, `listenH2c`) — `.block` at the edge
-- In-process OpenSSL ALPN `h2` (`Grpc.Native.Tls` → `Tls.connectH2` / `serveH2`) — **blocking FFI** in v1.2.0; see [async-io.md](async-io.md)
+- In-process OpenSSL ALPN `h2` (`Grpc.Native.Tls` → `Tls.connectH2` / `serveH2` / `*Async`) — **blocking FFI**, **off-loop** under Async in v1.3.0; see [async-io.md](async-io.md)
 - Optional sidecar via `LEAN_GRPC_TLS_PROXY` (client dials h2c to a local terminator)
 
 ## Credentials
@@ -104,7 +104,8 @@ These are intentionally lightweight compared to full OpenTelemetry SDKs.
 ## Process / concurrency model
 
 - Networking uses Lean 4 `Std.Async` (libuv-backed). Prefer one event-loop owner per process for listen/accept.
-- **v1.2.0+:** `serveH2cAsync` schedules connections with `Std.Async.background` so concurrent h2c clients can share one UV loop. See [async-io.md](async-io.md).
+- **v1.2.0+:** `serveH2cAsync` schedules connections with `Std.Async.background` so concurrent h2c clients can share one UV loop.
+- **v1.3.0+:** TLS accept/handshake/`SSL_*` run via `H2.runOffLoop` / dedicated fibers so OpenSSL does not stall that loop. See [async-io.md](async-io.md).
 - Interop loopbacks that need a second peer may still **spawn a child executable** (e.g. `trailersLoopback`) when mixing sync `.block` adapters with tasks.
 - CI runs multi-language peers as separate processes (Go / Python / h2spec).
 

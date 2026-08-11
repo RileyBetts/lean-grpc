@@ -4,7 +4,7 @@ This guide gets a Lean 4 unary gRPC server and client running on h2c with **type
 
 **Requirements:** Lean 4.32+ (see `lean-toolchain`), OpenSSL headers for the `Grpc` library (`libssl-dev` or `./scripts/fetch-openssl-headers.sh`). Peer gzip optionally uses a zlib helper (`./scripts/build_native.sh`) or system `gzip`.
 
-Package version: **1.2.0** (`lakefile.lean` / `Grpc.version`).
+Package version: **1.3.0** (`lakefile.lean` / `Grpc.version`).
 
 ## Build the repo
 
@@ -151,12 +151,12 @@ In your `lakefile.lean`:
 
 ```lean
 require «lean-grpc» from git
-  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.2.0"
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.3.0"
 ```
 
 Then `import Grpc` (and `Proto` if you use the bundled codecs). Public libs: `Bytes`, `Hpack`, `H2`, `Proto`, `Grpc`. Linking OpenSSL (`-lssl -lcrypto`) is pulled in via the `Grpc` Lake library (not via Bytes/Hpack/H2 alone). For peer gzip against foreign stacks, set `LEAN_GRPC_ZLIB_HELPER` after `./scripts/build_native.sh`. Full packaging notes: [packaging.md](packaging.md). Hosted docs: [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc).
 
-After [Reservoir](https://reservoir.lean-lang.org/) indexes the package you can use `require «lean-grpc»` without a git URL. Pin a commit SHA if the `v1.2.0` tag is not yet on the remote you use.
+After [Reservoir](https://reservoir.lean-lang.org/) indexes the package you can use `require «lean-grpc»` without a git URL. Pin a commit SHA if the `v1.3.0` tag is not yet on the remote you use.
 
 ## Next steps
 

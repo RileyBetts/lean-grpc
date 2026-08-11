@@ -22,7 +22,7 @@ jobs:
           chmod +x scripts/fetch-openssl-headers.sh
           ./scripts/fetch-openssl-headers.sh
       - name: Build libraries and tests
-        run: lake build Proofs bytesTests hpackTests h2Tests grpcTests securityTests trailersServer trailersLoopback asyncH2cLoopback tlsServer tlsLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary benchSoak opsSmoke h2specServer routeGuideServer routeGuideClient adcSmoke fakeAdsServer
+        run: lake build Proofs bytesTests hpackTests h2Tests grpcTests securityTests trailersServer trailersLoopback asyncH2cLoopback asyncTlsLoopback tlsServer tlsLoopback helloworldServer helloworldClient interopServer interopClient protocGenLean4Grpc benchUnary benchSoak opsSmoke h2specServer routeGuideServer routeGuideClient adcSmoke fakeAdsServer
       - name: Formal proofs (compile-time)
         run: lake build Proofs
       - name: Unit tests
@@ -34,6 +34,7 @@ jobs:
           ./.lake/build/bin/securityTests
           ./.lake/build/bin/trailersLoopback
           ./.lake/build/bin/asyncH2cLoopback
+          ./.lake/build/bin/asyncTlsLoopback
       - name: Native ASAN / UBSan security harness
         run: |
           chmod +x scripts/security-asan.sh

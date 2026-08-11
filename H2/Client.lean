@@ -89,9 +89,17 @@ def connectTransportAsync (t : AsyncByteTransport) : Async ClientConn := do
   readBuf.set buf
   return { transport := t, state, readBuf }
 
-/-- Sync/TLS entry: wrap blocking `ByteTransport` then run async preface exchange. -/
+/-- Sync/TLS entry: wrap blocking `ByteTransport` then run async preface via `.block`.
+    Prefer calling this from an off-loop dedicated task (`H2.runOffLoop`) so OpenSSL
+    does not stall the UV thread. -/
 def connectTransport (t : ByteTransport) : IO ClientConn :=
   (connectTransportAsync (.ofBlocking t)).block
+
+/-- Dial/preface on a dedicated thread (blocking OpenSSL), then return a `ClientConn`
+    whose later Async send/recv use `ofBlockingOffLoop` (issue #10). -/
+def connectTransportOffLoopAsync (t : ByteTransport) : Async ClientConn := do
+  let c ← runOffLoop (connectTransport t)
+  pure { c with transport := .ofBlockingOffLoop t }
 
 /-- Dial h2c without `.block` on connect/send/recv. -/
 def connectH2cAsync (host : String) (port : UInt16) : Async ClientConn := do
