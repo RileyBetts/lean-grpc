@@ -14,6 +14,9 @@ import Grpc.PeerIdentity
 import Grpc.Stream
 import Grpc.Compression
 import Grpc.Tls
+import Std.Async
+
+open Std.Async
 
 namespace Grpc
 
@@ -305,9 +308,14 @@ def handlerFor (s : Server) (peerIdentity : Option PeerIdentity := none)
 def serveH2c (s : Server) (cfg : H2.ServerConfig := {}) : IO Unit :=
   H2.Server.listen cfg (handlerFor s none false)
 
+/-- Async h2c serve (accept/send/recv without `.block` on the hot path). -/
+def serveH2cAsync (s : Server) (cfg : H2.ServerConfig := {}) : Async Unit :=
+  H2.Server.listenAsync cfg (handlerFor s none false)
+
 /-- Serve with in-process TLS+ALPN `h2` (see `Grpc.Tls.serveH2` for the
     plaintext/mTLS decision based on `tlsCfg`). Peer identity is extracted per
-    accepted connection and threaded into unary context handlers. -/
+    accepted connection and threaded into unary context handlers.
+    TLS byte IO remains blocking OpenSSL FFI in v1.2.0 — see docs/async-io.md. -/
 def serveTls (s : Server) (tlsCfg : Tls.Config) (cfg : H2.ServerConfig := {}) : IO Unit :=
   let mtlsRequired := tlsCfg.clientCaPath.isSome
   Tls.serveH2 tlsCfg cfg fun peerId => handlerFor s peerId mtlsRequired

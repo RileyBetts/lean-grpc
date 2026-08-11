@@ -18,8 +18,9 @@ open Std.Net
 
 namespace H2
 
+/-- Client connection. `transport` is async underneath; sync APIs `.block` at the edge. -/
 structure ClientConn where
-  transport : ByteTransport
+  transport : AsyncByteTransport
   state : IO.Ref ConnState
   readBuf : IO.Ref ByteArray
 
@@ -55,11 +56,11 @@ def rstToTrailers (code : UInt32) : Array Hpack.HeaderField :=
     ⟨"grpc-message".toUTF8, msg.toUTF8⟩
   ]
 
-/-- Finish HTTP/2 client preface + settings exchange on an already-connected transport. -/
-def connectTransport (t : ByteTransport) : IO ClientConn := do
+/-- Finish HTTP/2 client preface + settings on an async transport (no `.block`). -/
+def connectTransportAsync (t : AsyncByteTransport) : Async ClientConn := do
   t.send clientPreface
   let st := ConnState.create (isServer := false)
-  sendFrames t #[Frame.settings #[
+  sendFramesAsync t #[Frame.settings #[
     (.initialWindowSize, st.ourSettings.initialWindowSize),
     (.maxFrameSize, st.ourSettings.maxFrameSize)
   ]]
@@ -73,16 +74,14 @@ def connectTransport (t : ByteTransport) : IO ClientConn := do
     | some chunk =>
       buf := Bytes.Pool.pushBytes buf chunk
       let st0 ← state.get
-      let (frames, consumed) ← IO.ofExcept
-        (decodeFrames (Bytes.Slice.ofByteArray buf) st0.ourSettings.maxFrameSize.toNat)
+      let (frames, consumed) ← liftM (IO.ofExcept
+        (decodeFrames (Bytes.Slice.ofByteArray buf) st0.ourSettings.maxFrameSize.toNat))
       buf := buf.extract consumed buf.size
       let mut st := st0
       for f in frames do
-        let (st', outs) ← IO.ofExcept (handleFrame st f)
+        let (st', outs) ← liftM (IO.ofExcept (handleFrame st f))
         st := st'
-        sendFrames t outs
-        -- SETTINGS ACK is already emitted by `handleFrame`; do not send a second ACK
-        -- (grpc C-core / Python rejects unexpected SETTINGS ACKs with GOAWAY).
+        sendFramesAsync t outs
         if f.type == .settings && !(Flags.has f.flags Flags.ack) then
           gotSettings := true
       state.set st
@@ -90,19 +89,27 @@ def connectTransport (t : ByteTransport) : IO ClientConn := do
   readBuf.set buf
   return { transport := t, state, readBuf }
 
-def connectH2c (host : String) (port : UInt16) : IO ClientConn := do
+/-- Sync/TLS entry: wrap blocking `ByteTransport` then run async preface exchange. -/
+def connectTransport (t : ByteTransport) : IO ClientConn :=
+  (connectTransportAsync (.ofBlocking t)).block
+
+/-- Dial h2c without `.block` on connect/send/recv. -/
+def connectH2cAsync (host : String) (port : UInt16) : Async ClientConn := do
   let sock ← TCP.Socket.Client.mk
   let addr ←
     match IPv4Addr.ofString host with
     | some a => pure (SocketAddress.v4 { addr := a, port })
     | none => pure (SocketAddress.v4 { addr := IPv4Addr.ofParts 127 0 0 1, port })
-  (sock.connect addr).block
-  connectTransport (tcpTransport sock)
+  sock.connect addr
+  connectTransportAsync (tcpTransportAsync sock)
 
-/-- Start a new request stream; returns stream id.
-    When `endStream = false`, headers are sent and the stream stays open for DATA. -/
-def startRequest (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray)
-    (endStream : Bool := true) : IO UInt32 := do
+/-- Sync adapter over `connectH2cAsync`. -/
+def connectH2c (host : String) (port : UInt16) : IO ClientConn :=
+  (connectH2cAsync host port).block
+
+/-- Start a new request stream (Async). -/
+def startRequestAsync (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray)
+    (endStream : Bool := true) : Async UInt32 := do
   let mut st ← c.state.get
   let sid := st.nextClientStreamId
   st := { st with nextClientStreamId := sid + 2 }
@@ -111,29 +118,30 @@ def startRequest (c : ClientConn) (headers : Array Hpack.HeaderField) (body : By
   st := st.upsertStream s
   c.state.set st
   let block := Hpack.encodeHeadersIndexed headers
-  -- Peers such as grpc-go FullDuplex empty_stream expect END_STREAM on DATA,
-  -- not on the initial HEADERS, when the request body is empty.
   if body.size == 0 && endStream then
-    sendFrames c.transport #[
+    sendFramesAsync c.transport #[
       Frame.headers sid block false true,
       Frame.data sid ByteArray.empty true
     ]
   else if body.size == 0 && !endStream then
-    sendFrames c.transport #[Frame.headers sid block false true]
+    sendFramesAsync c.transport #[Frame.headers sid block false true]
   else
-    sendFrames c.transport #[Frame.headers sid block false true]
-    sendFrames c.transport (Frame.dataFragmented sid body endStream st.ourSettings.maxFrameSize.toNat)
+    sendFramesAsync c.transport #[Frame.headers sid block false true]
+    sendFramesAsync c.transport (Frame.dataFragmented sid body endStream st.ourSettings.maxFrameSize.toNat)
   return sid
 
-/-- Wait for response headers + data + optional trailers.
-    When `deadlineMs?` is set, RST_STREAM + throw after wall-clock expiry. -/
-partial def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 200)
-    (deadlineMs? : Option Nat := none) (t0 : Nat := 0) : IO Response := do
+def startRequest (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray)
+    (endStream : Bool := true) : IO UInt32 :=
+  (startRequestAsync c headers body endStream).block
+
+/-- Wait for response headers + data + optional trailers (Async — no `.block`). -/
+partial def awaitResponseAsync (c : ClientConn) (streamId : UInt32) (fuel : Nat := 200)
+    (deadlineMs? : Option Nat := none) (t0 : Nat := 0) : Async Response := do
   if fuel == 0 then throw (IO.userError "timeout waiting response")
   if let some ms := deadlineMs? then
     let now ← IO.monoMsNow
     if now - t0 ≥ ms then
-      sendFrames c.transport #[Frame.rstStream streamId 0x8]
+      sendFramesAsync c.transport #[Frame.rstStream streamId 0x8]
       throw (IO.userError "DEADLINE_EXCEEDED")
   let st ← c.state.get
   if let some s := st.getStream streamId then
@@ -158,16 +166,15 @@ partial def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 20
     let mut buf ← c.readBuf.get
     buf := Bytes.Pool.pushBytes buf chunk
     let st0 ← c.state.get
-    let (frames, consumed) ← IO.ofExcept
-      (decodeFrames (Bytes.Slice.ofByteArray buf) st0.ourSettings.maxFrameSize.toNat)
+    let (frames, consumed) ← liftM (IO.ofExcept
+      (decodeFrames (Bytes.Slice.ofByteArray buf) st0.ourSettings.maxFrameSize.toNat))
     c.readBuf.set (buf.extract consumed buf.size)
     let mut st := st0
     for f in frames do
-      let (st', outs) ← IO.ofExcept (handleFrame st f)
+      let (st', outs) ← liftM (IO.ofExcept (handleFrame st f))
       st := st'
-      sendFrames c.transport outs
+      sendFramesAsync c.transport outs
     c.state.set st
-    -- Re-check RST after processing frames (may have just closed the stream).
     if let some s := st.getStream streamId then
       if let some code := s.rstErrorCode then
         return {
@@ -176,18 +183,17 @@ partial def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 20
           data := s.dataBuf
           rstErrorCode := some code
         }
-    awaitResponse c streamId (fuel - 1) deadlineMs? t0
+    awaitResponseAsync c streamId (fuel - 1) deadlineMs? t0
 
-/-- Await a previously-started unary request's response (headers/data/trailers),
-    converting a wall-clock deadline timeout into synthesized DEADLINE_EXCEEDED
-    trailers. Split out from `unary` so callers that need the stream id early
-    (e.g. parallel hedging, which must be able to `resetStream` a losing
-    attempt while it is still in flight) can call `startRequest` themselves. -/
-def awaitUnary (c : ClientConn) (streamId : UInt32) (deadlineMs? : Option Nat := none) :
-    IO Response := do
+def awaitResponse (c : ClientConn) (streamId : UInt32) (fuel : Nat := 200)
+    (deadlineMs? : Option Nat := none) (t0 : Nat := 0) : IO Response :=
+  (awaitResponseAsync c streamId fuel deadlineMs? t0).block
+
+def awaitUnaryAsync (c : ClientConn) (streamId : UInt32) (deadlineMs? : Option Nat := none) :
+    Async Response := do
   let t0 ← IO.monoMsNow
   try
-    awaitResponse c streamId 200 deadlineMs? t0
+    awaitResponseAsync c streamId 200 deadlineMs? t0
   catch e =>
     if (toString e).contains "DEADLINE_EXCEEDED" then
       return {
@@ -200,22 +206,28 @@ def awaitUnary (c : ClientConn) (streamId : UInt32) (deadlineMs? : Option Nat :=
       }
     else throw e
 
-def unary (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray)
-    (deadlineMs? : Option Nat := none) : IO Response := do
-  let sid ← startRequest c headers body true
-  awaitUnary c sid deadlineMs?
+def awaitUnary (c : ClientConn) (streamId : UInt32) (deadlineMs? : Option Nat := none) :
+    IO Response :=
+  (awaitUnaryAsync c streamId deadlineMs?).block
 
-/-- Send RST_STREAM to cancel a stream.
-    Also marks the stream closed locally with the same error code, so a
-    client-initiated cancel (e.g. interop `cancel_after_begin`) is reflected
-    immediately by `awaitResponse` (via `rstToTrailers`) without depending on
-    anything coming back from the peer. -/
-def resetStream (c : ClientConn) (streamId : UInt32) (errorCode : UInt32 := 0x8) : IO Unit := do
-  sendFrames c.transport #[Frame.rstStream streamId errorCode]
+def unaryAsync (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray)
+    (deadlineMs? : Option Nat := none) : Async Response := do
+  let sid ← startRequestAsync c headers body true
+  awaitUnaryAsync c sid deadlineMs?
+
+def unary (c : ClientConn) (headers : Array Hpack.HeaderField) (body : ByteArray)
+    (deadlineMs? : Option Nat := none) : IO Response :=
+  (unaryAsync c headers body deadlineMs?).block
+
+def resetStreamAsync (c : ClientConn) (streamId : UInt32) (errorCode : UInt32 := 0x8) : Async Unit := do
+  sendFramesAsync c.transport #[Frame.rstStream streamId errorCode]
   let st ← c.state.get
   match st.getStream streamId with
   | some s => c.state.set (st.upsertStream { s with state := .closed, rstErrorCode := some errorCode })
   | none => pure ()
+
+def resetStream (c : ClientConn) (streamId : UInt32) (errorCode : UInt32 := 0x8) : IO Unit :=
+  (resetStreamAsync c streamId errorCode).block
 
 end Client
 end H2

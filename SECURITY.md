@@ -4,7 +4,7 @@
 
 Security fixes are applied to the published tip (`main` / `development` as released). There is no long-term LTS train yet.
 
-**Supported version:** the latest **tagged** release (e.g. `v1.1.0`). Maintainers create tags manually — see [docs/packaging.md](docs/packaging.md). Prefer GitHub Security Advisories for private reports when enabled.
+**Supported version:** the latest **tagged** release (e.g. `v1.2.0`). Maintainers create tags manually — see [docs/packaging.md](docs/packaging.md). Prefer GitHub Security Advisories for private reports when enabled.
 
 ## Reporting a vulnerability
 

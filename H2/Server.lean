@@ -44,19 +44,6 @@ private def parseAddr (host : String) (port : UInt16) : IO SocketAddress := do
   | none =>
     return .v4 { addr := IPv4Addr.ofParts 127 0 0 1, port }
 
-def sendFrames (t : ByteTransport) (frames : Array Frame) : IO Unit := do
-  for f in frames do
-    t.send (Frame.encode f)
-
-/-- Read until we have at least `n` bytes; returns exactly `n` bytes and any leftover. -/
-partial def recvExact (t : ByteTransport) (need : Nat) (acc : ByteArray := ByteArray.empty) :
-    IO (ByteArray × ByteArray) := do
-  if acc.size ≥ need then
-    return (acc.extract 0 need, acc.extract need acc.size)
-  match (← t.recv? 65536) with
-  | none => throw (IO.userError "EOF")
-  | some chunk => recvExact t need (Bytes.Pool.pushBytes acc chunk)
-
 /-- Build response HEADERS frames only; DATA is queued via `queueSend` for flow control. -/
 def responseHeaderFrames (streamId : UInt32) (headers : Array Hpack.HeaderField)
     (bodyEmpty : Bool) (trailersEmpty : Bool) (headersAlreadySent : Bool) (finished : Bool) :
@@ -67,14 +54,104 @@ def responseHeaderFrames (streamId : UInt32) (headers : Array Hpack.HeaderField)
     let hdrBlock := Hpack.encodeHeadersIndexed headers
     return #[Frame.headers streamId hdrBlock endOnHeaders true]
 
-/-- Drain buffered reads into frames and handle them. -/
+def sendFramesAsync (t : AsyncByteTransport) (frames : Array Frame) : Async Unit := do
+  for f in frames do
+    t.send (Frame.encode f)
+
+/-- Sync helper over `AsyncByteTransport` (`.block` at the edge). -/
+def sendFramesBlocking (t : AsyncByteTransport) (frames : Array Frame) : IO Unit :=
+  (sendFramesAsync t frames).block
+
+def sendFrames (t : ByteTransport) (frames : Array Frame) : IO Unit := do
+  for f in frames do
+    t.send (Frame.encode f)
+
+/-- Read until we have at least `n` bytes; returns exactly `n` bytes and any leftover. -/
+partial def recvExactAsync (t : AsyncByteTransport) (need : Nat)
+    (acc : ByteArray := ByteArray.empty) : Async (ByteArray × ByteArray) := do
+  if acc.size ≥ need then
+    return (acc.extract 0 need, acc.extract need acc.size)
+  match (← t.recv? 65536) with
+  | none => throw (IO.userError "EOF")
+  | some chunk => recvExactAsync t need (Bytes.Pool.pushBytes acc chunk)
+
+partial def recvExact (t : ByteTransport) (need : Nat) (acc : ByteArray := ByteArray.empty) :
+    IO (ByteArray × ByteArray) := do
+  if acc.size ≥ need then
+    return (acc.extract 0 need, acc.extract need acc.size)
+  match (← t.recv? 65536) with
+  | none => throw (IO.userError "EOF")
+  | some chunk => recvExact t need (Bytes.Pool.pushBytes acc chunk)
+
+/-- Drain buffered reads into frames and handle them (Async transport). -/
+partial def processBufferAsync (t : AsyncByteTransport) (st : ConnState) (buf : ByteArray)
+    (handler : StreamHandler) : Async (ConnState × ByteArray) := do
+  let (frames, consumed) ←
+    match decodeFrames (Bytes.Slice.ofByteArray buf) st.ourSettings.maxFrameSize.toNat with
+    | .error e =>
+      if e.startsWith "frame too large" then
+        sendFramesAsync t #[Frame.goAway st.lastPeerStreamId 0x6]
+        return ({ st with wentAway := true }, ByteArray.empty)
+      else throw (IO.userError e)
+    | .ok x => pure x
+  let mut st := st
+  let mut replies : Array Frame := #[]
+  for f in frames do
+    let (st', outs) ← liftM (IO.ofExcept (handleFrame st f))
+    st := st'
+    replies := replies ++ outs
+    if let some s := st.getStream f.streamId then
+      if s.endHeaders && s.state != .closed then
+        let shouldInvoke :=
+          !s.handlerFinished && (s.endStreamRemote || (s.dataBuf.size > s.dataConsumed))
+        if shouldInvoke then
+          let hdrs := s.requestHeaders
+          let fresh := s.dataBuf.extract s.dataConsumed s.dataBuf.size
+          let resp ← liftM (handler s.id hdrs fresh s.endStreamRemote s.responseHeadersSent)
+          let emitFrames := !resp.headers.isEmpty || resp.body.size > 0 ||
+            (resp.finished && (s.responseHeadersSent || !resp.headers.isEmpty || !resp.trailers.isEmpty))
+          if emitFrames then
+            replies := replies ++ responseHeaderFrames s.id resp.headers
+              (resp.body.size == 0) resp.trailers.isEmpty s.responseHeadersSent resp.finished
+            let headersNowSent := s.responseHeadersSent || !resp.headers.isEmpty
+            let endOnHeaders := resp.finished && resp.body.size == 0 && resp.trailers.isEmpty
+              && !s.responseHeadersSent && !resp.headers.isEmpty
+            let s := { s with
+              dataConsumed := s.dataBuf.size
+              responseHeadersSent := headersNowSent
+              handlerFinished := resp.finished || s.handlerFinished
+              headersBuf := if resp.finished then ByteArray.empty else s.headersBuf
+              dataBuf := if resp.finished then ByteArray.empty else s.dataBuf
+              trailersBuf := if resp.finished then ByteArray.empty else s.trailersBuf }
+            st := st.upsertStream s
+            if !endOnHeaders && (resp.body.size > 0 || !resp.trailers.isEmpty ||
+                (resp.finished && headersNowSent)) then
+              let (st', dataFrames) := queueSend st s.id resp.body resp.trailers resp.finished
+              st := st'
+              replies := replies ++ dataFrames
+          else
+            let advanced := resp.finished || resp.body.size > 0 || !resp.headers.isEmpty
+            let s := { s with
+              dataConsumed := if advanced then s.dataBuf.size else s.dataConsumed
+              responseHeadersSent := s.responseHeadersSent || !resp.headers.isEmpty
+              handlerFinished := resp.finished || s.handlerFinished
+              state := if resp.finished then .closed else s.state
+              headersBuf := if resp.finished then ByteArray.empty else s.headersBuf
+              dataBuf := if resp.finished then ByteArray.empty else s.dataBuf
+              trailersBuf := if resp.finished then ByteArray.empty else s.trailersBuf }
+            st := st.upsertStream s
+  sendFramesAsync t replies
+  let rest := buf.extract consumed buf.size
+  return (st, rest)
+
+/-- Drain buffered reads into frames and handle them (blocking `ByteTransport`). -/
 partial def processBuffer (t : ByteTransport) (st : ConnState) (buf : ByteArray)
     (handler : StreamHandler) : IO (ConnState × ByteArray) := do
   let (frames, consumed) ←
     match decodeFrames (Bytes.Slice.ofByteArray buf) st.ourSettings.maxFrameSize.toNat with
     | .error e =>
       if e.startsWith "frame too large" then
-        sendFrames t #[Frame.goAway st.lastPeerStreamId 0x6] -- FRAME_SIZE_ERROR
+        sendFrames t #[Frame.goAway st.lastPeerStreamId 0x6]
         return ({ st with wentAway := true }, ByteArray.empty)
       else throw (IO.userError e)
     | .ok x => pure x
@@ -86,8 +163,6 @@ partial def processBuffer (t : ByteTransport) (st : ConnState) (buf : ByteArray)
     replies := replies ++ outs
     if let some s := st.getStream f.streamId then
       if s.endHeaders && s.state != .closed then
-        -- After `finished := true`, only flushPending may run (no re-invoke).
-        -- Incremental duplex keeps invoking until it returns finished (trailers).
         let shouldInvoke :=
           !s.handlerFinished && (s.endStreamRemote || (s.dataBuf.size > s.dataConsumed))
         if shouldInvoke then
@@ -102,7 +177,6 @@ partial def processBuffer (t : ByteTransport) (st : ConnState) (buf : ByteArray)
             let headersNowSent := s.responseHeadersSent || !resp.headers.isEmpty
             let endOnHeaders := resp.finished && resp.body.size == 0 && resp.trailers.isEmpty
               && !s.responseHeadersSent && !resp.headers.isEmpty
-            -- Keep stream open until flushPending finishes (flow-control WINDOW_UPDATE).
             let s := { s with
               dataConsumed := s.dataBuf.size
               responseHeadersSent := headersNowSent
@@ -131,6 +205,32 @@ partial def processBuffer (t : ByteTransport) (st : ConnState) (buf : ByteArray)
   let rest := buf.extract consumed buf.size
   return (st, rest)
 
+/-- Serve one accepted client (Async TCP — no `.block` on send/recv). -/
+partial def serveConnAsync (t : AsyncByteTransport) (handler : StreamHandler) : Async Unit := do
+  let (preface, leftover) ← recvExactAsync t clientPreface.size
+  if preface != clientPreface then
+    throw (IO.userError s!"bad client preface got={Bytes.BE.hexDump (Bytes.Slice.ofByteArray preface)}")
+  let mut st := ConnState.create
+  sendFramesAsync t #[Frame.settings #[
+    (.initialWindowSize, st.ourSettings.initialWindowSize),
+    (.maxConcurrentStreams, st.ourSettings.maxConcurrentStreams),
+    (.maxFrameSize, st.ourSettings.maxFrameSize),
+    (.maxHeaderListSize, st.ourSettings.maxHeaderListSize)
+  ]]
+  let mut buf := leftover
+  if buf.size > 0 then
+    let (st', rest) ← processBufferAsync t st buf handler
+    st := st'
+    buf := rest
+  while !st.wentAway do
+    match (← t.recv? 65536) with
+    | none => break
+    | some chunk =>
+      buf := Bytes.Pool.pushBytes buf chunk
+      let (st', rest) ← processBufferAsync t st buf handler
+      st := st'
+      buf := rest
+
 /-- Serve one accepted client as h2c prior-knowledge (or TLS already terminated). -/
 partial def serveConn (t : ByteTransport) (handler : StreamHandler) : IO Unit := do
   let (preface, leftover) ← recvExact t clientPreface.size
@@ -157,27 +257,37 @@ partial def serveConn (t : ByteTransport) (handler : StreamHandler) : IO Unit :=
       st := st'
       buf := rest
 
-/-- Listen for h2c connections; each accepted client is served concurrently. -/
-partial def listenH2c (cfg : ServerConfig) (handler : StreamHandler) : IO Unit := do
+/-- Listen for h2c connections under `Std.Async` (accept/send/recv without `.block`).
+    Each connection is scheduled with `background` on the same UV loop. -/
+partial def listenH2cAsync (cfg : ServerConfig) (handler : StreamHandler) : Async Unit := do
   let server ← TCP.Socket.Server.mk
   let addr ← parseAddr cfg.host cfg.port
   server.bind addr
   server.listen 128
-  IO.println s!"H2 h2c listening on {cfg.host}:{cfg.port}"
+  IO.println s!"H2 h2c listening on {cfg.host}:{cfg.port} (Async)"
   while true do
-    let client ← server.accept.block
-    discard <| IO.asTask (prio := .dedicated) do
+    let client ← server.accept
+    background (prio := Task.Priority.dedicated) do
       try
-        serveConn (tcpTransport client) handler
+        serveConnAsync (tcpTransportAsync client) handler
       catch e =>
         IO.eprintln s!"conn error: {e}"
+
+/-- Sync adapter: runs `listenH2cAsync` to completion via `.block` at the edge. -/
+def listenH2c (cfg : ServerConfig) (handler : StreamHandler) : IO Unit :=
+  (listenH2cAsync cfg handler).block
 
 /-- Serve using a pre-built transport (e.g. in-process TLS accept). -/
 def serveTransport (t : ByteTransport) (handler : StreamHandler) : IO Unit :=
   serveConn t handler
 
+/-- Async serve using an async transport. -/
+def serveTransportAsync (t : AsyncByteTransport) (handler : StreamHandler) : Async Unit :=
+  serveConnAsync t handler
+
 namespace Server
 def listen := listenH2c
+def listenAsync := listenH2cAsync
 end Server
 
 end H2
