@@ -9,6 +9,9 @@ import Grpc.Status
 import Grpc.Message
 import Grpc.Metadata
 import Grpc.Compression
+import Std.Async
+
+open Std.Async
 
 namespace Grpc
 
@@ -128,6 +131,66 @@ def unaryCall (c : H2.ClientConn) (service method : String) (authority : String)
   let (sid, deadlineMs?) ←
     startUnary c service method authority request extraHeaders compress useHttps
   finishUnary c sid deadlineMs?
+
+/-- Async variant of `startUnary` (no `.block` on send). -/
+def startUnaryAsync (c : H2.ClientConn) (service method : String) (authority : String)
+    (request : ByteArray) (extraHeaders : Array Hpack.HeaderField := #[])
+    (compress : Compression.Algorithm := .identity)
+    (useHttps : Bool := false) : Async (UInt32 × Option Nat) := do
+  let scheme := if useHttps then Metadata.schemeHttps else Metadata.schemeHttp
+  let mut headers : Array Hpack.HeaderField :=
+    #[
+      Metadata.methodPost,
+      scheme,
+      ⟨Metadata.ascii ":authority", Metadata.ascii authority⟩,
+      Metadata.path service method,
+      Metadata.contentTypeGrpc,
+      Metadata.teTrailers,
+      Metadata.userAgent,
+      Metadata.grpcAcceptEncoding "identity,gzip,deflate,snappy"
+    ] ++ extraHeaders
+  if compress != .identity then
+    headers := headers.push (Metadata.grpcEncoding compress.name)
+  let body ← liftM (Message.encodeIO request compress)
+  let deadlineMs? : Option Nat :=
+    Id.run do
+      for h in extraHeaders do
+        let (n, v) := headerAscii h
+        if n == "grpc-timeout" then
+          match Metadata.parseTimeoutMs v with
+          | some ms => return some ms
+          | none => pure ()
+      return none
+  let sid ← H2.Client.startRequestAsync c headers body true
+  return (sid, deadlineMs?)
+
+/-- Async await + decode into `CallResult`. -/
+def finishUnaryAsync (c : H2.ClientConn) (streamId : UInt32) (deadlineMs? : Option Nat) :
+    Async CallResult := do
+  let resp ← H2.Client.awaitUnaryAsync c streamId deadlineMs?
+  let status := statusFromHeaders resp.headers resp.trailers
+  let respAlg :=
+    Id.run do
+      for h in resp.headers do
+        let (n, v) := headerAscii h
+        if n == "grpc-encoding" then
+          if let some a := Compression.Algorithm.parse? v then return a
+      return Compression.Algorithm.gzip
+  let payloads ←
+    match ← liftM (Message.decodeAllIO (Bytes.Slice.ofByteArray resp.data) true respAlg
+        Message.defaultMaxMsgSize) with
+    | .ok ps => pure ps
+    | .error _ => pure #[]
+  let message := payloads.getD 0 ByteArray.empty
+  return { status, message, headers := resp.headers, trailers := resp.trailers }
+
+def unaryCallAsync (c : H2.ClientConn) (service method : String) (authority : String)
+    (request : ByteArray) (extraHeaders : Array Hpack.HeaderField := #[])
+    (compress : Compression.Algorithm := .identity)
+    (useHttps : Bool := false) : Async CallResult := do
+  let (sid, deadlineMs?) ←
+    startUnaryAsync c service method authority request extraHeaders compress useHttps
+  finishUnaryAsync c sid deadlineMs?
 
 end Client
 end Grpc

@@ -3,6 +3,7 @@ Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Grpc
+import H2
 import Examples.Helloworld.Generated
 
 /-- Typed helloworld server (stubs from `Generated.lean` / `./scripts/gen-helloworld.sh`). -/
@@ -22,4 +23,7 @@ def main : IO Unit := do
     s := Grpc.Channelz.register s counters
   | _ =>
     s := Grpc.Health.registerWithWatch s healthStatus
-  Grpc.Server.serveH2c s { host := "127.0.0.1", port := 50051 }
+  let cfg : H2.ServerConfig := { host := "127.0.0.1", port := 50051 }
+  match ← IO.getEnv "LEAN_GRPC_ASYNC" with
+  | some "1" => (Grpc.Server.serveH2cAsync s cfg).block
+  | _ => Grpc.Server.serveH2c s cfg

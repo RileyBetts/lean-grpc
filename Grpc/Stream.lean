@@ -66,13 +66,13 @@ def send (w : StreamWriter) (msg : ByteArray) : IO Unit := do
   while st.sendConnWindow ≤ 0 && spins < 50 do
     spins := spins + 1
     IO.sleep 1
-  H2.sendFrames w.conn.transport (H2.Frame.dataFragmented w.streamId (Message.encodeId msg) false
+  H2.sendFramesBlocking w.conn.transport (H2.Frame.dataFragmented w.streamId (Message.encodeId msg) false
     st.ourSettings.maxFrameSize.toNat)
 
 def halfClose (w : StreamWriter) : IO Unit := do
   if ← w.closed.get then return
   w.closed.set true
-  H2.sendFrames w.conn.transport #[H2.Frame.data w.streamId ByteArray.empty true]
+  H2.sendFramesBlocking w.conn.transport #[H2.Frame.data w.streamId ByteArray.empty true]
 
 end StreamWriter
 
@@ -88,7 +88,7 @@ partial def ensureHeaders (r : StreamReader) (fuel : Nat := 200) : IO (Array Hpa
     if s.endHeaders then
       r.headers.set (some s.requestHeaders)
       return s.requestHeaders
-  match (← r.conn.transport.recv? 65536) with
+  match (← (r.conn.transport.recv? 65536).block) with
   | none => throw (IO.userError "EOF")
   | some chunk =>
     let mut buf ← r.conn.readBuf.get
@@ -101,7 +101,7 @@ partial def ensureHeaders (r : StreamReader) (fuel : Nat := 200) : IO (Array Hpa
     for f in frames do
       let (st', outs) ← IO.ofExcept (H2.handleFrame st f)
       st := st'
-      H2.sendFrames r.conn.transport outs
+      H2.sendFramesBlocking r.conn.transport outs
     r.conn.state.set st
     ensureHeaders r (fuel - 1)
 
@@ -142,7 +142,7 @@ partial def recv? (r : StreamReader) (fuel : Nat := 200) : IO (Option ByteArray)
       r.done.set true
       return none
   if fuel == 0 then throw (IO.userError "timeout waiting message")
-  match (← r.conn.transport.recv? 65536) with
+  match (← (r.conn.transport.recv? 65536).block) with
   | none =>
     r.done.set true
     return none
@@ -157,7 +157,7 @@ partial def recv? (r : StreamReader) (fuel : Nat := 200) : IO (Option ByteArray)
     for f in frames do
       let (st', outs) ← IO.ofExcept (H2.handleFrame st f)
       st := st'
-      H2.sendFrames r.conn.transport outs
+      H2.sendFramesBlocking r.conn.transport outs
     r.conn.state.set st
     recv? r (fuel - 1)
 

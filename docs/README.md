@@ -15,13 +15,14 @@ User and contributor docs for the Lean 4 gRPC stack.
 | [Website sync](website-sync.md) | How curated docs stay aligned with rileybetts.ai |
 | [Provenance / IP diligence](provenance.md) | Independent protocol implementation note; third-party interop protos |
 | [Architecture](architecture.md) | Layering, data flow, process model |
+| [Async IO](async-io.md) | Std.Async honesty, `*Async` APIs, sync adapters, TLS caveat |
 | [API reference](api-reference.md) | Primary `Grpc` / `H2` / `Proto` surfaces |
 | [Protocol mapping](protocol-mapping.md) | How lean-grpc maps onto gRPC-over-HTTP/2 |
 | [Conformance](conformance.md) | Scorecard, compliance estimates, interop matrix, allowlists |
 | [Formal proofs](proofs.md) | Compile-time `Proofs` library for pure codecs / maps |
 | [TLS / Envoy](tls-envoy.md) | In-process OpenSSL and optional sidecars |
 | [CHANGELOG](../CHANGELOG.md) | Package version history |
-| [ROADMAP](../ROADMAP.md) | What v1.1.0 shipped vs open proof/hardening follow-ups |
+| [ROADMAP](../ROADMAP.md) | What v1.3.0 shipped vs open proof/hardening follow-ups |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Dev setup, tests, PR expectations |
 | [SECURITY](../SECURITY.md) | Vulnerability reporting |
 | [Code of Conduct](../CODE_OF_CONDUCT.md) | Community standards |

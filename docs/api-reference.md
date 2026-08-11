@@ -1,6 +1,6 @@
 # API reference
 
-Lean module catalogue for consumers. Signatures are summarized; see source under `Grpc/`, `H2/`, `Proto/` for full definitions. Version string: `Grpc.version` (currently `1.1.0`).
+Lean module catalogue for consumers. Signatures are summarized; see source under `Grpc/`, `H2/`, `Proto/` for full definitions. Version string: `Grpc.version` (currently `1.3.0`). Async vs sync IO: [async-io.md](async-io.md).
 
 Import umbrella: `import Grpc` (pulls status, channel, server, credentials, TLS, xDS, ops, etc.). Add `import Proto` for bundled message codecs.
 
@@ -59,7 +59,7 @@ Length-prefixed gRPC frames (`Compressed-Flag` + 4-byte length + payload).
 
 `status`, `message` (decoded payload bytes), `headers`, `trailers`.
 
-### `Grpc.Client.unaryCall`
+### `Grpc.Client.unaryCall` / `unaryCallAsync`
 
 Low-level unary on an `H2.ClientConn` (scheme http/https, user-agent, compression).
 
@@ -69,7 +69,7 @@ Low-level unary on an `H2.ClientConn` (scheme http/https, user-agent, compressio
 |---|---|
 | `connectH2c host port` | Plain h2c channel |
 | `dial target opts svc?` | Resolve + balanc + connect (`dns:///`, `host:port`, `xds:///`) |
-| `unary ch service method request metadata? timeout? compress?` | Unary RPC |
+| `unary` / `unaryAsync` | Unary RPC (Async = no `.block` on h2c call path; hedge/retry via sync adapter) |
 | `openStream ch service method metadata?` | Interactive bidi client stream |
 | `serverStream` / `clientStream` / `bidiStream` | Batch streaming helpers (messages + status) |
 | `get` / `goAway` / `close` | Connection pool / drain |
@@ -121,8 +121,8 @@ Verified mTLS peer certificate identity (OpenSSL; subject DN is **RFC 2253**):
 | `registerTyped` / `registerTypedWithContext` | Typed unary adapters |
 | `registerServerStream` / `registerClientStream` / `registerBidi` | Streaming (raw bytes; context deferred) |
 | `registerServerStreamTyped` / `registerClientStreamTyped` / `registerBidiTyped` | Streaming with decode/encode adapters |
-| `serveH2c` | Listen h2c (`peerIdentity = none`) |
-| `serveTls` | Listen TLS+ALPN; per-connection peer identity → context handlers |
+| `serveH2c` / `serveH2cAsync` | Listen h2c (`peerIdentity = none`); Async path has no `.block` on accept/send/recv |
+| `serveTls` / `serveTlsAsync` | Listen TLS+ALPN; per-connection peer identity → context handlers (OpenSSL **off-loop** under Async in v1.3.0) |
 | `maxMsgSize` | Inbound limit |
 
 Bad `content-type` → HTTP **415**. Unknown method / zero timeout → trailers-only gRPC status.
@@ -222,11 +222,12 @@ Consumers usually stay in `Grpc.*`. Useful lower APIs:
 
 | API | Purpose |
 |---|---|
-| `H2.Client.connectH2c` / `connectTransport` | Client connection |
-| `H2.Client.startRequest` / `awaitResponse` / `unary` / `resetStream` | Streams |
+| `H2.Client.connectH2c` / `connectH2cAsync` / `connectTransport` | Client connection |
+| `H2.Client.startRequest` / `awaitResponse` / `unary` (+ `*Async`) / `resetStream` | Streams |
 | `H2.Client.rstToTrailers` | RST → synthetic gRPC trailers |
-| `H2.Server.listen` / `serveConn` | Server accept loop |
-| `H2.ByteTransport` | Pluggable send/recv |
+| `H2.Server.listen` / `listenAsync` / `serveConn` / `serveConnAsync` | Server accept loop |
+| `H2.AsyncByteTransport` / `tcpTransportAsync` | Native Async send/recv (h2c) |
+| `H2.ByteTransport` / `tcpTransport` | Sync facade (`.block` adapters) |
 | `H2.handleFrame` / `ConnState` | State machine (tested via h2spec) |
 
 ---
