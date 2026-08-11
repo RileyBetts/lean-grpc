@@ -82,7 +82,7 @@ Package version in-tree is **1.1.0** (`lakefile.lean`, `Grpc.version`). Hosted d
 
 Documented only — do **not** automate tagging from CI or agent runs.
 
-1. Merge packaging / feature work → `development`, then promote to `main` when ready to publish.
+1. Land packaging / feature work via PR into `development`, then promote with PR **`development` → `main`** when ready to publish.
 2. Confirm the repository is **public** and GitHub license detection shows **Apache-2.0**.
 3. Enable GitHub Security Advisories / private vulnerability reporting if available.
 4. Obtain **≥2 GitHub stars** ([Reservoir inclusion criteria](https://reservoir.lean-lang.org/inclusion-criteria)).
@@ -104,8 +104,15 @@ Documented only — do **not** automate tagging from CI or agent runs.
 
 ## Branching
 
-- `main` — stable releases / published tip  
-- `development` — integration  
-- `feature/…` — branch from `development`
+Flow: **`feature/…` → `development` → `main`** (enforced with GitHub rulesets: PR + green CI into `development` and `main`).
 
-See also [CONTRIBUTING.md](../CONTRIBUTING.md) and [CHANGELOG.md](../CHANGELOG.md).
+| Branch | Role |
+|---|---|
+| `feature/…` | Implementation; branch from `development`; direct push allowed |
+| `development` | Integration tip; **PR only** from `feature/…` |
+| `main` | Published tip; **PR only** from `development` |
+| tags `v*` | Releases; create on `main` only |
+
+Do **not** open `feature/*` → `main` PRs, commit directly to `main`/`development`, or force-push those branches. Full contributor steps: [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+See also [CHANGELOG.md](../CHANGELOG.md).
