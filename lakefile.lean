@@ -7,9 +7,9 @@ open Lake DSL
 open System
 
 package «lean-grpc» where
-  version := v!"1.2.0"
+  version := v!"1.3.0"
   keywords := #["grpc", "http2", "hpack", "protobuf", "networking"]
-  description := "Pure Lean 4 gRPC stack (HTTP/2 + HPACK + gRPC); Std.Async.TCP with native Async h2c APIs"
+  description := "Pure Lean 4 gRPC stack (HTTP/2 + HPACK + gRPC); Async h2c + off-loop TLS"
   homepage := "https://rileybetts.ai/oss/lean-grpc"
   license := "Apache-2.0"
   licenseFiles := #["LICENSE", "NOTICE"]
@@ -69,6 +69,9 @@ lean_exe trailersLoopback where
 
 lean_exe asyncH2cLoopback where
   root := `Tests.AsyncH2cLoopback
+
+lean_exe asyncTlsLoopback where
+  root := `Tests.AsyncTlsLoopback
 
 lean_exe tlsServer where
   root := `Tests.TlsServer

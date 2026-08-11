@@ -315,10 +315,15 @@ def serveH2cAsync (s : Server) (cfg : H2.ServerConfig := {}) : Async Unit :=
 /-- Serve with in-process TLS+ALPN `h2` (see `Grpc.Tls.serveH2` for the
     plaintext/mTLS decision based on `tlsCfg`). Peer identity is extracted per
     accepted connection and threaded into unary context handlers.
-    TLS byte IO remains blocking OpenSSL FFI in v1.2.0 — see docs/async-io.md. -/
+    OpenSSL stays blocking FFI but runs **off** the UV loop in v1.3.0 — see docs/async-io.md. -/
 def serveTls (s : Server) (tlsCfg : Tls.Config) (cfg : H2.ServerConfig := {}) : IO Unit :=
   let mtlsRequired := tlsCfg.clientCaPath.isSome
   Tls.serveH2 tlsCfg cfg fun peerId => handlerFor s peerId mtlsRequired
+
+/-- Async TLS serve: accept/handshake/`SSL_*` off-loop; connections on `background`. -/
+def serveTlsAsync (s : Server) (tlsCfg : Tls.Config) (cfg : H2.ServerConfig := {}) : Async Unit :=
+  let mtlsRequired := tlsCfg.clientCaPath.isSome
+  Tls.serveH2Async tlsCfg cfg fun peerId => handlerFor s peerId mtlsRequired
 
 end Server
 end Grpc

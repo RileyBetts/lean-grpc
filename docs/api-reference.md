@@ -1,6 +1,6 @@
 # API reference
 
-Lean module catalogue for consumers. Signatures are summarized; see source under `Grpc/`, `H2/`, `Proto/` for full definitions. Version string: `Grpc.version` (currently `1.2.0`). Async vs sync IO: [async-io.md](async-io.md).
+Lean module catalogue for consumers. Signatures are summarized; see source under `Grpc/`, `H2/`, `Proto/` for full definitions. Version string: `Grpc.version` (currently `1.3.0`). Async vs sync IO: [async-io.md](async-io.md).
 
 Import umbrella: `import Grpc` (pulls status, channel, server, credentials, TLS, xDS, ops, etc.). Add `import Proto` for bundled message codecs.
 
@@ -122,7 +122,7 @@ Verified mTLS peer certificate identity (OpenSSL; subject DN is **RFC 2253**):
 | `registerServerStream` / `registerClientStream` / `registerBidi` | Streaming (raw bytes; context deferred) |
 | `registerServerStreamTyped` / `registerClientStreamTyped` / `registerBidiTyped` | Streaming with decode/encode adapters |
 | `serveH2c` / `serveH2cAsync` | Listen h2c (`peerIdentity = none`); Async path has no `.block` on accept/send/recv |
-| `serveTls` | Listen TLS+ALPN; per-connection peer identity → context handlers (**blocking** OpenSSL FFI in v1.2.0) |
+| `serveTls` / `serveTlsAsync` | Listen TLS+ALPN; per-connection peer identity → context handlers (OpenSSL **off-loop** under Async in v1.3.0) |
 | `maxMsgSize` | Inbound limit |
 
 Bad `content-type` → HTTP **415**. Unknown method / zero timeout → trailers-only gRPC status.

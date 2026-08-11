@@ -1,6 +1,18 @@
 # Changelog
 
-All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **1.2.0**). Git tags such as `v1.2.0` are created manually by maintainers when publishing.
+All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **1.3.0**). Git tags such as `v1.3.0` are created manually by maintainers when publishing.
+
+## [1.3.0] — 2026-08-11
+
+Off-loop TLS so OpenSSL does not stall the UV loop ([#10](https://github.com/RileyBetts/lean-grpc/issues/10)).
+
+- **`H2.runOffLoop` / `AsyncByteTransport.ofBlockingOffLoop`:** blocking `IO` (including `SSL_*`) runs on `IO.asTask .dedicated`, then resumes Async — UV stays free.
+- **Async TLS APIs:** `Tls.connectH2Async`, `Tls.serveH2Async`, `Server.serveTlsAsync`. Sync `connectH2` / `serveH2` / `serveTls` remain pure blocking `IO` (safe under `IO.asTask`; no nested `Async.block`).
+- **Honesty:** still **blocking** OpenSSL FFI — documented as off-loop, not nonblocking BIO.
+- **Tests:** `asyncTlsLoopback` — concurrent off-loop TLS clients + Async h2c on one UV loop; in-process `serveTlsAsync` smoke.
+- **Docs:** [docs/async-io.md](docs/async-io.md) updated for the v1.3.0 TLS model.
+
+Migration: additive — bump pin to `v1.3.0`. Prefer `*Async` TLS under Async composition; keep IO APIs for lean-compliance.
 
 ## [1.2.0] — 2026-08-11
 
