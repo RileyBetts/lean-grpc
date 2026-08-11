@@ -1,6 +1,20 @@
 # Changelog
 
-All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **1.1.0**). Git tags such as `v1.1.0` are created manually by maintainers when publishing.
+All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **1.2.0**). Git tags such as `v1.2.0` are created manually by maintainers when publishing.
+
+## [1.2.0] — 2026-08-11
+
+Honest Async IO + native Async h2c path ([#6](https://github.com/RileyBetts/lean-grpc/issues/6)).
+
+- **Docs honesty:** README / architecture / package description no longer imply end-to-end Async for the blocking IO adapters. New [docs/async-io.md](docs/async-io.md) describes UV-loop ownership, sync adapters, and the TLS sync caveat.
+- **Async transport:** `H2.AsyncByteTransport`, `tcpTransportAsync` (send/recv **without** `.block`); `ByteTransport` / `tcpTransport` kept as `.block` adapters.
+- **Async h2c:** `listenH2cAsync` / `connectH2cAsync` / `awaitResponseAsync` / `serveH2cAsync` / `Channel.unaryAsync` / `Client.unaryCallAsync` — zero `.block` on accept/connect/send/recv for the Async call chain.
+- **Compatibility:** existing `serveH2c`, `unary`, `connectH2c` remain; they `.block` the Async core at the edge.
+- **TLS:** in-process OpenSSL FFI stays **blocking** in v1.2.0 (documented); no false “fully async TLS” claim.
+- **Tests:** `asyncH2cLoopback` — concurrent Async clients against `serveH2cAsync` on one UV loop.
+- **Example:** helloworld server honors `LEAN_GRPC_ASYNC=1` → `serveH2cAsync`.
+
+Migration: additive — bump pin to `v1.2.0`. Prefer `*Async` for new h2c composition; keep IO APIs for lean-compliance and existing code.
 
 ## [1.1.0] — 2026-08-04
 

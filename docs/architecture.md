@@ -11,7 +11,7 @@ flowchart TB
   Hpack[Hpack: encode decode]
   Bytes[Bytes: Slice Pool BE]
   Native[Native: tls_ffi]
-  TCP[Std.Async.TCP / ByteTransport]
+  TCP[Std.Async.TCP / AsyncByteTransport]
 
   App --> Grpc
   App --> Proto
@@ -39,8 +39,8 @@ Executables (examples, interop, benches, codegen plugin) sit outside the librari
 
 ## Client path
 
-1. **`Channel.dial` / `connectH2c`** — parse target (`host:port`, `dns:///…`, `xds:///…`), resolve addresses, pick via balancer, open `H2.ClientConn` (h2c or TLS transport).
-2. **`Channel.unary`** — apply call credentials → build request headers (`:method POST`, `:path`, `content-type`, `te: trailers`, `user-agent`, optional `grpc-timeout` / `grpc-encoding`) → length-prefix encode body → `H2.Client.startRequest` / `awaitResponse`.
+1. **`Channel.dial` / `connectH2c`** — parse target (`host:port`, `dns:///…`, `xds:///…`), resolve addresses, pick via balancer, open `H2.ClientConn` (h2c or TLS transport). Async: `connectH2cAsync` / `Channel.unaryAsync`.
+2. **`Channel.unary`** — apply call credentials → build request headers (`:method POST`, `:path`, `content-type`, `te: trailers`, `user-agent`, optional `grpc-timeout` / `grpc-encoding`) → length-prefix encode body → `H2.Client.startRequest` / `awaitResponse` (sync adapters `.block` the Async core).
 3. **Response** — decode headers/trailers into `Status` (including HTTP non-200 / RST_STREAM mapping), inflate message if compressed, enforce max receive size.
 4. **Retry / hedge** — service config may retry status codes with backoff, or launch parallel hedges and RST losers.
 5. **Keepalive** — idle PING; unanswered PING → GOAWAY and reconnect.
@@ -49,7 +49,7 @@ Streaming uses `Channel.openStream` → `Grpc.Stream` writer/reader over the sam
 
 ## Server path
 
-1. **`Server.serveH2c` / `serveTls`** — accept TCP (or TLS listener), run HTTP/2 preface + SETTINGS.
+1. **`Server.serveH2c` / `serveH2cAsync` / `serveTls`** — accept TCP (or TLS listener), run HTTP/2 preface + SETTINGS. Async h2c uses `background` per connection (no `.block` on accept/send/recv).
 2. **`handlerFor`** — on each stream: parse path / content-type / timeout / encodings; reject bad content-type with **HTTP 415**; trailers-only for unimplemented / zero deadline.
 3. Dispatch unary or streaming handler; encode response messages; send headers + DATA + trailers (`grpc-status` / `grpc-message` / optional `grpc-status-details-bin`).
 
@@ -57,10 +57,11 @@ Health, reflection, and channelz are ordinary registered methods (`Grpc.Health`,
 
 ## Transport abstraction
 
-`H2.ByteTransport` is a small send/recv interface. Implementations:
+`H2.AsyncByteTransport` is the native Async send/recv interface (h2c hot path). `H2.ByteTransport` is the sync facade (`.block` adapters + TLS FFI). Implementations:
 
-- Plain TCP (`H2.Client.connectH2c`, `H2.Server.listenH2c`)
-- In-process OpenSSL ALPN `h2` (`Grpc.Native.Tls` → `Tls.connectH2` / `serveH2`)
+- Plain TCP Async (`H2.Client.connectH2cAsync`, `H2.Server.listenH2cAsync`) — **no** `.block` on the Async chain
+- Plain TCP sync adapters (`connectH2c`, `listenH2c`) — `.block` at the edge
+- In-process OpenSSL ALPN `h2` (`Grpc.Native.Tls` → `Tls.connectH2` / `serveH2`) — **blocking FFI** in v1.2.0; see [async-io.md](async-io.md)
 - Optional sidecar via `LEAN_GRPC_TLS_PROXY` (client dials h2c to a local terminator)
 
 ## Credentials
@@ -103,7 +104,8 @@ These are intentionally lightweight compared to full OpenTelemetry SDKs.
 ## Process / concurrency model
 
 - Networking uses Lean 4 `Std.Async` (libuv-backed). Prefer one event-loop owner per process for listen/accept.
-- Interop loopbacks that need a second peer often **spawn a child executable** (e.g. `trailersLoopback`) instead of sharing one UV loop across conflicting `.block` tasks.
+- **v1.2.0+:** `serveH2cAsync` schedules connections with `Std.Async.background` so concurrent h2c clients can share one UV loop. See [async-io.md](async-io.md).
+- Interop loopbacks that need a second peer may still **spawn a child executable** (e.g. `trailersLoopback`) when mixing sync `.block` adapters with tasks.
 - CI runs multi-language peers as separate processes (Go / Python / h2spec).
 
 ## Native code

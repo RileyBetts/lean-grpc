@@ -18,6 +18,9 @@ import Grpc.ServiceConfig
 import Grpc.Retry
 import Grpc.Xds
 import Grpc.XdsAds
+import Std.Async
+
+open Std.Async
 
 namespace Grpc
 
@@ -109,7 +112,7 @@ def get (ch : Channel) : IO H2.ClientConn := do
     let st ← c.state.get
     -- Keepalive enforcement: unanswered PING → GOAWAY and drop connection.
     if st.pendingPingAtMs != 0 && now - st.pendingPingAtMs ≥ pingTimeoutMs then
-      H2.sendFrames c.transport (H2.goAwayFrames st)
+      H2.sendFramesBlocking c.transport (H2.goAwayFrames st)
       c.state.set { st with wentAway := true, pendingPing := ByteArray.empty, pendingPingAtMs := 0 }
       ch.conn.set none
       let addr ← ch.connAddr.get
@@ -121,7 +124,7 @@ def get (ch : Channel) : IO H2.ClientConn := do
       let last ← ch.lastActivityMs.get
       if now - last ≥ ch.keepaliveMs && st.pendingPingAtMs == 0 then
         let payload := ByteArray.mk #[1,2,3,4,5,6,7,8]
-        H2.sendFrames c.transport #[H2.Frame.ping payload]
+        H2.sendFramesBlocking c.transport #[H2.Frame.ping payload]
         c.state.set { st with pendingPing := payload, pendingPingAtMs := now }
         ch.lastActivityMs.set now
     return c
@@ -300,6 +303,53 @@ def unary (ch : Channel) (service method : String) (request : ByteArray)
         return last
     return last
 
+/-- Async unary RPC (h2c send/recv without `.block` on the call path).
+    Hedging/retry still run via the sync `unary` adapter for v1.2.0. -/
+def unaryAsync (ch : Channel) (service method : String) (request : ByteArray)
+    (metadata : Metadata := {}) (timeout? : Option String := none)
+    (compress : Compression.Algorithm := .identity) : Async CallResult := do
+  match ch.serviceConfig.hedging, ch.serviceConfig.retry with
+  | some _, _ | _, some _ =>
+    liftM (unary ch service method request metadata timeout? compress)
+  | none, none =>
+    if request.size > ch.sendMsgSize then
+      return { status := .resourceExhausted "message too large", message := ByteArray.empty,
+               headers := #[], trailers := #[] }
+    let deadlineMs? :=
+      match timeout? with
+      | some t => Metadata.parseTimeoutMs t
+      | none => ch.serviceConfig.timeoutMs
+    if let some 0 := deadlineMs? then
+      return { status := .deadlineExceeded, message := ByteArray.empty, headers := #[], trailers := #[] }
+    let mut md := metadata
+    if let some creds := ch.callCreds then
+      md ← liftM (creds.apply md)
+    let mut extra := Metadata.toFields md
+    if let some t := timeout? then
+      extra := extra.push (Metadata.timeout t)
+    else if let some ms := deadlineMs? then
+      extra := extra.push (Metadata.timeout s!"{ms}m")
+    liftM (pickAndMaybeReconnect ch)
+    if ← liftM (checkGoAway ch) then
+      return goAwayResult
+    let c ← liftM (get ch)
+    let t0 ← IO.monoMsNow
+    let useHttps :=
+      match ch.channelCreds with
+      | .tls _ => true
+      | .insecure => false
+    let res ← Client.unaryCallAsync c service method ch.host request extra compress useHttps
+    let t1 ← IO.monoMsNow
+    ch.lastActivityMs.set t1
+    let res :=
+      match deadlineMs? with
+      | some ms =>
+        if t1 - t0 ≥ ms || res.status.code == .deadlineExceeded then
+          { res with status := Status.deadlineExceeded }
+        else res
+      | none => res
+    return enforceRecvSize ch res
+
 /-- Open a bidirectional client stream for `service/method`. -/
 def openStream (ch : Channel) (service method : String)
     (metadata : Metadata := {}) : IO Stream.ClientStream := do
@@ -362,7 +412,7 @@ def goAway (ch : Channel) : IO Unit := do
   | none => pure ()
   | some c =>
     let st ← c.state.get
-    H2.sendFrames c.transport (H2.goAwayFrames st)
+    H2.sendFramesBlocking c.transport (H2.goAwayFrames st)
     ch.conn.set none
 
 def close (ch : Channel) : IO Unit := do

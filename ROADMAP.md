@@ -1,6 +1,6 @@
 # Roadmap
 
-lean-grpc **v1.1.0** is the current package tip (Lake / `Grpc.version`): an interop-tested Lean 4 gRPC stack with a CI-gated **`Proofs`** library for selected pure codecs, plus additive mTLS peer-identity / request-context APIs for enterprise AuthN. It is **not** a machine-checked end-to-end PROTOCOL-HTTP2 / TLS / session proof.
+lean-grpc **v1.2.0** is the current package tip (Lake / `Grpc.version`): an interop-tested Lean 4 gRPC stack with native Async h2c APIs (honest Std.Async model), a CI-gated **`Proofs`** library for selected pure codecs, plus additive mTLS peer-identity / request-context APIs for enterprise AuthN. It is **not** a machine-checked end-to-end PROTOCOL-HTTP2 / TLS / session proof.
 
 This document records what shipped, what is still open, and the next proof/hardening tranches.
 
@@ -24,6 +24,16 @@ First public packaging baseline (interop + Lake/Reservoir layout). Formal Lean p
 | TLS (in-process OpenSSL) + compression caps | Security-hardened; ASAN / `securityTests` gated |
 | Dial / LB / retry, health, reflection, channelz | Present; ops demos gated |
 | ADC / xDS ADS | Mock / FakeAds CI; live Google paths allowlisted |
+
+## Shipped — v1.2.0 (Async honesty)
+
+Native Async h2c + docs that match the implementation ([#6](https://github.com/RileyBetts/lean-grpc/issues/6), [docs/async-io.md](docs/async-io.md)).
+
+| Included | Deferred |
+|---|---|
+| `AsyncByteTransport` / `*Async` h2c serve/dial/unary | Nonblocking TLS BIO / off-loop OpenSSL |
+| Sync IO APIs as `.block` adapters | Streaming `*Async` surface beyond unary |
+| Concurrent `asyncH2cLoopback` CI | Full Concurrent retry/hedge under Async |
 
 ## Shipped — v1.1.0 (IAM)
 
@@ -51,7 +61,7 @@ Product/packaging release with **selected** compile-time proofs. See [docs/proof
 
 **Explicit non-goals (unchanged):** ALTS / GCE channel credentials, HTTP CONNECT proxying, full `cacheable_unary` proxy infrastructure, end-to-end session proofs.
 
-## Toward v1.2.x / later
+## Toward v1.3.x / later
 
 Work is grouped so each tranche can ship as a minor release without waiting for a full ConnState + Huffman proof stack.
 
@@ -99,11 +109,11 @@ Close remaining audit follow-ups so later minors are not “proved but soft”:
 ## Milestone sketch
 
 ```text
-v0.5.0 ──► v1.0.0              ──► v1.1.0              ──► v1.2.x
- shipped     interop +           mTLS peer identity +   ConnState +
-             selected Proofs     ServerCallContext      general frame/msg
-             (CI) + provenance   (unary IAM)            roundtrips /
-                                                        Huffman trie
+v0.5.0 ──► v1.0.0              ──► v1.1.0              ──► v1.2.0              ──► v1.3.x
+ shipped     interop +           mTLS peer identity +   Async h2c honesty     ConnState +
+             selected Proofs     ServerCallContext      (#6) + sync adapters   general frame/msg
+             (CI) + provenance   (unary IAM)                                  roundtrips /
+                                                                              Huffman trie
 ```
 
 Dates are intentionally omitted; order matters more than calendar.

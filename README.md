@@ -4,9 +4,11 @@
 [![Lean](https://img.shields.io/badge/Lean-4.32-purple.svg)](lean-toolchain)
 [![Docs](https://img.shields.io/badge/docs-rileybetts.ai-0B3D2E.svg)](https://rileybetts.ai/oss/lean-grpc)
 
-General-purpose **Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing on `Std.Async.TCP`.
+General-purpose **Lean 4 gRPC library**: HPACK + HTTP/2 + gRPC framing over `Std.Async.TCP`.
 
-Standalone Lake package (**1.1.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
+Standalone Lake package (**1.2.0**). Consumers depend via git tag or, after indexing, [Reservoir](https://reservoir.lean-lang.org/).
+
+**Async model:** sockets are `Std.Async.TCP`. Through v1.1.x the public API was blocking `IO` via `.block`. **v1.2.0** adds a native Async h2c path (`serveH2cAsync` / `unaryAsync`) with **zero** `.block` on accept/connect/send/recv; existing IO APIs remain as explicit sync adapters. In-process TLS is still blocking OpenSSL FFI — see [docs/async-io.md](docs/async-io.md).
 
 **Docs:** [rileybetts.ai/oss/lean-grpc](https://rileybetts.ai/oss/lean-grpc) (curated) · [docs/](docs/README.md) (full in-repo index)
 
@@ -20,7 +22,7 @@ In your `lakefile.lean`:
 
 ```lean
 require «lean-grpc» from git
-  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.1.0"
+  "https://github.com/RileyBetts/lean-grpc.git" @ "v1.2.0"
 ```
 
 Then `import Grpc`. After Reservoir lists the package you can use `require «lean-grpc»` without a git URL. Packaging details and the maintainer release checklist: [docs/packaging.md](docs/packaging.md).
@@ -36,13 +38,14 @@ Then `import Grpc`. After Reservoir lists the package you can use `require «lea
 | [Packaging](docs/packaging.md) | Lake/Reservoir layout, consumer contract, release checklist |
 | [Provenance](docs/provenance.md) | Independent protocol implementation; third-party interop protos |
 | [Architecture](docs/architecture.md) | Layering and data flow |
+| [Async IO](docs/async-io.md) | Std.Async model, sync adapters, TLS caveat |
 | [API reference](docs/api-reference.md) | Module catalogue |
 | [Protocol mapping](docs/protocol-mapping.md) | gRPC-over-HTTP/2 mapping for this stack |
 | [Conformance](docs/conformance.md) | Scorecard, interop matrix, allowlists |
 | [Formal proofs](docs/proofs.md) | Compile-time theorems for pure codecs |
 | [TLS / Envoy](docs/tls-envoy.md) | In-process OpenSSL and sidecars |
 | [CHANGELOG](CHANGELOG.md) | Version history |
-| [ROADMAP](ROADMAP.md) | What v1.1.0 shipped vs open proof/hardening follow-ups |
+| [ROADMAP](ROADMAP.md) | What v1.2.0 shipped vs open proof/hardening follow-ups |
 | [CONTRIBUTING](CONTRIBUTING.md) | Dev setup and PR expectations |
 | [SECURITY](SECURITY.md) | Vulnerability reporting (`security@rileybetts.ai`) |
 | [Code of Conduct](CODE_OF_CONDUCT.md) | Community standards |
