@@ -7,7 +7,7 @@ open Lake DSL
 open System
 
 package «lean-grpc» where
-  version := v!"1.3.0"
+  version := v!"1.5.0"
   keywords := #["grpc", "http2", "hpack", "protobuf", "networking"]
   description := "Pure Lean 4 gRPC stack (HTTP/2 + HPACK + gRPC); Async h2c + off-loop TLS"
   homepage := "https://rileybetts.ai/oss/lean-grpc"

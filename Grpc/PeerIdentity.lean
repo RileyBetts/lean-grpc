@@ -34,4 +34,8 @@ structure ServerCallContext where
   mtlsRequired : Bool := false
   deriving Inhabited
 
+/-- `StreamCallContext` is the same as `ServerCallContext`, available in streaming handlers
+    for mTLS peer identity and inbound metadata (IAM parity with unary context). -/
+abbrev StreamCallContext := ServerCallContext
+
 end Grpc

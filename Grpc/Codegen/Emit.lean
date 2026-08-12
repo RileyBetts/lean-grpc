@@ -455,6 +455,30 @@ def emitServiceTyped (pkg : String) (svc : ServiceDescriptor) : Except String St
         out := out ++ s!"    (h : Grpc.ServerCallContext → {reqTy} → IO ({respTy} × Grpc.Status)) : Grpc.Server :=\n"
         out := out ++ s!"  Grpc.Server.registerTypedWithContext s \"{full}\" \"{m.name}\"\n"
         out := out ++ s!"    {reqTy}.decode {respTy}.encode h\n\n"
+      else if !m.clientStreaming && m.serverStreaming then
+        let reqTy := localMessageName m.inputType
+        let respTy := localMessageName m.outputType
+        out := out ++ s!"/-- Register a typed server-streaming handler with `StreamCallContext` for `{svc.name}/{m.name}`. -/\n"
+        out := out ++ s!"def register{svc.name}{m.name}ServerStreamWithContext (s : Grpc.Server)\n"
+        out := out ++ s!"    (h : Grpc.StreamCallContext → {reqTy} → IO (Array {respTy} × Grpc.Status)) : Grpc.Server :=\n"
+        out := out ++ s!"  Grpc.Server.registerServerStreamTypedWithContext s \"{full}\" \"{m.name}\"\n"
+        out := out ++ s!"    {reqTy}.decode {respTy}.encode h\n\n"
+      else if m.clientStreaming && !m.serverStreaming then
+        let reqTy := localMessageName m.inputType
+        let respTy := localMessageName m.outputType
+        out := out ++ s!"/-- Register a typed client-streaming handler with `StreamCallContext` for `{svc.name}/{m.name}`. -/\n"
+        out := out ++ s!"def register{svc.name}{m.name}ClientStreamWithContext (s : Grpc.Server)\n"
+        out := out ++ s!"    (h : Grpc.StreamCallContext → Array {reqTy} → IO ({respTy} × Grpc.Status)) : Grpc.Server :=\n"
+        out := out ++ s!"  Grpc.Server.registerClientStreamTypedWithContext s \"{full}\" \"{m.name}\"\n"
+        out := out ++ s!"    {reqTy}.decode {respTy}.encode h\n\n"
+      else if m.clientStreaming && m.serverStreaming then
+        let reqTy := localMessageName m.inputType
+        let respTy := localMessageName m.outputType
+        out := out ++ s!"/-- Register a typed bidi-streaming handler with `StreamCallContext` for `{svc.name}/{m.name}`. -/\n"
+        out := out ++ s!"def register{svc.name}{m.name}BidiWithContext (s : Grpc.Server)\n"
+        out := out ++ s!"    (h : Grpc.StreamCallContext → Array {reqTy} → IO (Array {respTy} × Grpc.Status)) : Grpc.Server :=\n"
+        out := out ++ s!"  Grpc.Server.registerBidiTypedWithContext s \"{full}\" \"{m.name}\"\n"
+        out := out ++ s!"    {reqTy}.decode {respTy}.encode h\n\n"
     return out
 
 /-- Emit one `.lean` file's worth of message structs + typed client/server code for a single
