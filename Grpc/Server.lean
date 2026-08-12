@@ -31,6 +31,10 @@ inductive MethodHandler where
   | serverStream (h : Stream.ServerStreamHandler)
   | clientStream (h : Stream.ClientStreamHandler)
   | bidi (h : Stream.BidiStreamHandler)
+  /-- Context-aware streaming variants (v1.5.0 — mTLS IAM parity). -/
+  | serverStreamCtx (h : Stream.ServerStreamHandlerWithContext)
+  | clientStreamCtx (h : Stream.ClientStreamHandlerWithContext)
+  | bidiCtx (h : Stream.BidiStreamHandlerWithContext)
 
 structure ServiceMethod where
   service : String
@@ -63,6 +67,21 @@ def registerClientStream (s : Server) (service method : String) (h : Stream.Clie
 def registerBidi (s : Server) (service method : String) (h : Stream.BidiStreamHandler) : Server :=
   { s with methods := s.methods.push ⟨service, method, .bidi h⟩ }
 
+/-- Register a server-streaming handler with `StreamCallContext` (mTLS IAM parity, v1.5.0). -/
+def registerServerStreamWithContext (s : Server) (service method : String)
+    (h : Stream.ServerStreamHandlerWithContext) : Server :=
+  { s with methods := s.methods.push ⟨service, method, .serverStreamCtx h⟩ }
+
+/-- Register a client-streaming handler with `StreamCallContext`. -/
+def registerClientStreamWithContext (s : Server) (service method : String)
+    (h : Stream.ClientStreamHandlerWithContext) : Server :=
+  { s with methods := s.methods.push ⟨service, method, .clientStreamCtx h⟩ }
+
+/-- Register a bidi-streaming handler with `StreamCallContext`. -/
+def registerBidiWithContext (s : Server) (service method : String)
+    (h : Stream.BidiStreamHandlerWithContext) : Server :=
+  { s with methods := s.methods.push ⟨service, method, .bidiCtx h⟩ }
+
 /-- Typed unary register: decode request, run handler, encode response. -/
 def registerTyped (s : Server) (service method : String)
     (decode : ByteArray → Except String α) (encode : β → ByteArray)
@@ -84,6 +103,43 @@ def registerTypedWithContext (s : Server) (service method : String)
     | .ok req =>
       let (resp, st) ← h ctx req
       return (encode resp, st)
+
+/-- Typed server-streaming register with `StreamCallContext`. -/
+def registerServerStreamTypedWithContext (s : Server) (service method : String)
+    (decode : ByteArray → Except String α) (encode : β → ByteArray)
+    (h : StreamCallContext → α → IO (Array β × Status)) : Server :=
+  registerServerStreamWithContext s service method fun ctx reqBytes => do
+    match decode reqBytes with
+    | .error e => return (#[], Status.invalidArgument e)
+    | .ok req =>
+      let (resps, st) ← h ctx req
+      return (resps.map encode, st)
+
+/-- Typed client-streaming register with `StreamCallContext`. -/
+def registerClientStreamTypedWithContext (s : Server) (service method : String)
+    (decode : ByteArray → Except String α) (encode : β → ByteArray)
+    (h : StreamCallContext → Array α → IO (β × Status)) : Server :=
+  registerClientStreamWithContext s service method fun ctx reqBytes => do
+    let mut reqs : Array α := #[]
+    for b in reqBytes do
+      match decode b with
+      | .error e => return (ByteArray.empty, Status.invalidArgument e)
+      | .ok r => reqs := reqs.push r
+    let (resp, st) ← h ctx reqs
+    return (encode resp, st)
+
+/-- Typed bidi-streaming register with `StreamCallContext`. -/
+def registerBidiTypedWithContext (s : Server) (service method : String)
+    (decode : ByteArray → Except String α) (encode : β → ByteArray)
+    (h : StreamCallContext → Array α → IO (Array β × Status)) : Server :=
+  registerBidiWithContext s service method fun ctx reqBytes => do
+    let mut reqs : Array α := #[]
+    for b in reqBytes do
+      match decode b with
+      | .error e => return (#[], Status.invalidArgument e)
+      | .ok r => reqs := reqs.push r
+    let (resps, st) ← h ctx reqs
+    return (resps.map encode, st)
 
 /-- Typed server-streaming register (still batch: one request → array of responses). -/
 def registerServerStreamTyped (s : Server) (service method : String)
@@ -299,6 +355,49 @@ def handlerFor (s : Server) (peerIdentity : Option PeerIdentity := none)
           }
         else
           -- Incremental duplex: emit responses while the client stream stays open.
+          return {
+            headers := if headersSent then #[] else respHeaders
+            body := ← encodeManyIO msgs respAlg
+            finished := false
+          }
+      | .serverStreamCtx h =>
+        let req := payloads.getD 0 ByteArray.empty
+        let (msgs, st) ← h ctx req
+        return {
+          headers := respHeaders
+          body := ← encodeManyIO msgs respAlg
+          trailers := Metadata.statusHeaders st
+          finished := true
+        }
+      | .clientStreamCtx h =>
+        let (resp, st) ← h ctx payloads
+        let body ←
+          if st.code != .ok && resp.isEmpty then pure ByteArray.empty
+          else Message.encodeIO resp respAlg
+        return {
+          headers := respHeaders
+          body
+          trailers := Metadata.statusHeaders st
+          finished := true
+        }
+      | .bidiCtx h =>
+        if payloads.isEmpty then
+          if !endStream then
+            return { finished := false }
+          return {
+            headers := if headersSent then #[] else respHeaders
+            trailers := Metadata.statusHeaders Status.ok
+            finished := true
+          }
+        let (msgs, st) ← h ctx payloads
+        if endStream then
+          return {
+            headers := if headersSent then #[] else respHeaders
+            body := ← encodeManyIO msgs respAlg
+            trailers := Metadata.statusHeaders st
+            finished := true
+          }
+        else
           return {
             headers := if headersSent then #[] else respHeaders
             body := ← encodeManyIO msgs respAlg

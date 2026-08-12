@@ -1,6 +1,6 @@
 # Roadmap
 
-lean-grpc **v1.3.0** is the current package tip (Lake / `Grpc.version`): an interop-tested Lean 4 gRPC stack with native Async h2c APIs, **off-loop** in-process TLS (blocking OpenSSL on dedicated threads), a CI-gated **`Proofs`** library for selected pure codecs, plus additive mTLS peer-identity / request-context APIs for enterprise AuthN. It is **not** a machine-checked end-to-end PROTOCOL-HTTP2 / TLS / session proof.
+lean-grpc **v1.5.0** is the current package tip (Lake / `Grpc.version`): an interop-tested Lean 4 gRPC stack with native Async h2c APIs, **off-loop** in-process TLS (blocking OpenSSL on dedicated threads), a CI-gated **`Proofs`** library covering pure codecs and **H2.ConnState** transitions, security-hardened Huffman trie decoder and xDS JSON parser, plus additive mTLS peer-identity / request-context APIs for both unary and streaming handlers. It is **not** a machine-checked end-to-end PROTOCOL-HTTP2 / TLS / session proof.
 
 This document records what shipped, what is still open, and the next proof/hardening tranches.
 
@@ -24,6 +24,17 @@ First public packaging baseline (interop + Lake/Reservoir layout). Formal Lean p
 | TLS (in-process OpenSSL) + compression caps | Security-hardened; ASAN / `securityTests` gated |
 | Dial / LB / retry, health, reflection, channelz | Present; ops demos gated |
 | ADC / xDS ADS | Mock / FakeAds CI; live Google paths allowlisted |
+
+## Shipped — v1.5.0 (proof foundations + security hardening + streaming context)
+
+Three sequenced tranches from the post-v1.3.0 plan:
+
+| Included | Note |
+|---|---|
+| `Proofs/ConnState.lean` — 4 theorem families (CONTINUATION, windows, ENHANCE_YOUR_CALM, GOAWAY) | Zero `sorry`; CI-gated |
+| Huffman O(1) trie decoder (LGSEC-2026-23) + EOS/padding lemmas | Fixed bit-mask bug; encode↔decode roundtrips |
+| xDS bootstrap state-machine JSON parser (LGSEC-2026-32) | Handles field ordering, escapes, unterminated values |
+| Streaming `StreamCallContext` + `register*WithContext` + codegen | mTLS IAM parity for all streaming RPC types |
 
 ## Shipped — v1.3.0 (TLS off-loop)
 

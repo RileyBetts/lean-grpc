@@ -10,6 +10,7 @@ import Hpack
 import Grpc.Status
 import Grpc.Message
 import Grpc.Metadata
+import Grpc.PeerIdentity
 import Grpc.Client
 
 namespace Grpc.Stream
@@ -218,6 +219,24 @@ abbrev ClientStreamHandler := Array ByteArray → IO (ByteArray × Status)
 
 /-- Bidi handler: many requests → many responses (buffered batch for now). -/
 abbrev BidiStreamHandler := Array ByteArray → IO (Array ByteArray × Status)
+
+/-! ## Context-aware streaming handler types (mTLS IAM parity, v1.5.0)
+
+Each variant receives a `Grpc.StreamCallContext` (alias for `ServerCallContext`)
+carrying mTLS `peerIdentity` + inbound request metadata, matching the contract
+already available to unary handlers via `UnaryHandlerWithContext`. -/
+
+/-- Server streaming handler with `StreamCallContext` (peer identity + metadata). -/
+abbrev ServerStreamHandlerWithContext :=
+  Grpc.StreamCallContext → ByteArray → IO (Array ByteArray × Status)
+
+/-- Client streaming handler with `StreamCallContext`. -/
+abbrev ClientStreamHandlerWithContext :=
+  Grpc.StreamCallContext → Array ByteArray → IO (ByteArray × Status)
+
+/-- Bidi streaming handler with `StreamCallContext`. -/
+abbrev BidiStreamHandlerWithContext :=
+  Grpc.StreamCallContext → Array ByteArray → IO (Array ByteArray × Status)
 
 structure Incoming where
   messages : Array ByteArray
