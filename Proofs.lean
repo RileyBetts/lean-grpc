@@ -9,3 +9,4 @@ import Proofs.Wire
 import Proofs.Frame
 import Proofs.Metadata
 import Proofs.Hpack
+import Proofs.ConnState

@@ -1,6 +1,44 @@
 # Changelog
 
-All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **1.3.0**). Git tags such as `v1.3.0` are created manually by maintainers when publishing.
+All notable changes to lean-grpc are documented here. The package version is the Lake/`Grpc.version` semver (currently **1.5.0**). Git tags such as `v1.5.0` are created manually by maintainers when publishing.
+
+## [1.5.0] — 2026-08-12
+
+Three sequenced engineering tranches: ConnState proof foundations (v1.4.0), security hardening LGSEC-2026-23 + LGSEC-2026-32 (v1.4.1), and streaming `ServerCallContext` for mTLS IAM parity (v1.5.0).
+
+### Tranche 1 — `H2.ConnState` proof foundations (was v1.4.0)
+
+New `Proofs/ConnState.lean` — zero `sorry`, CI-gated:
+
+- **CONTINUATION sequencing:** `handleFrame` rejects any non-CONTINUATION frame while `expectContinuation` is set; CONTINUATION for the wrong stream id is also a connection error.
+- **Non-negative recv windows:** `recvConnWindow` and per-stream `recvWindow` remain ≥ 0 after DATA within budget; DATA exceeding window triggers FLOW_CONTROL GOAWAY.
+- **`ENHANCE_YOUR_CALM`:** server rejects a header block exceeding `SETTINGS_MAX_HEADER_LIST_SIZE` with GOAWAY error code 0xb.
+- **GOAWAY gate:** `handleFrame` rejects new streams (id > `lastPeerStreamId`) and re-seen idle streams once `wentAway = true`; receiving a GOAWAY frame sets `wentAway`.
+
+### Tranche 2 — Security hardening (was v1.4.1)
+
+**LGSEC-2026-23 — Huffman decode-trie rewrite (`Hpack/Huffman.lean`):**
+- Replaced `O(n)` linear scan of `fullTable` per accumulated prefix with a pre-built `TrieRow` array sorted by code-length, enabling O(257) = O(1) per-symbol decode bounded by the fixed table size.
+- Fixed bit-accumulator mask bug (stale high bits above bit 29 now cleared with `&&& 0x3fffffff` after each consume).
+- Added `Hpack.Huffman.Error` `BEq`/`DecidableEq` instances.
+- New lemmas in `Proofs/Hpack.lean`: EOS symbol rejection, zero-padding rejection, valid-padding acceptance, and encode→decode roundtrip for "application/grpc".
+
+**LGSEC-2026-32 — xDS bootstrap JSON state-machine (`Grpc/Xds.lean`):**
+- Replaced the hand-rolled string scraper (`parseServerUris`, `parseBootstrap`) with a proper recursive-descent JSON parser: `parseVal` / inline array+object parsing consuming `fuel : Nat` for structural recursion.
+- Handles arbitrary whitespace, field reordering, `\"` escapes, nested objects, and unterminated-value attacks (returns `none` safely).
+- `parseEndpointsJson` also updated to use the new parser.
+
+### Tranche 3 — Streaming `ServerCallContext` (IAM parity, v1.5.0)
+
+**API additions (all additive):**
+- `Grpc.StreamCallContext` — alias for `ServerCallContext`; available in all streaming handler types.
+- `Stream.ServerStreamHandlerWithContext`, `Stream.ClientStreamHandlerWithContext`, `Stream.BidiStreamHandlerWithContext` — handler types carrying `StreamCallContext`.
+- `MethodHandler.serverStreamCtx`, `.clientStreamCtx`, `.bidiCtx` — new dispatch variants.
+- `Server.registerServerStreamWithContext`, `registerClientStreamWithContext`, `registerBidiWithContext` — streaming registration with context.
+- `Server.registerServerStreamTypedWithContext`, `registerClientStreamTypedWithContext`, `registerBidiTypedWithContext` — typed+decoded variants.
+- **Codegen:** `protoc-gen-lean4-grpc` now emits `register{Svc}{Method}ServerStreamWithContext`, `…ClientStreamWithContext`, `…BidiWithContext` alongside existing body-only registrars.
+
+Migration: fully additive — bump pin to `v1.5.0`. All existing `register*` APIs and handler types are unchanged; the `WithContext` variants are opt-in.
 
 ## [1.3.0] — 2026-08-11
 

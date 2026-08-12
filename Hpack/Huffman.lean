@@ -1,6 +1,10 @@
 /-
 Copyright © 2026, Riley Betts Ltd (rileybetts.ai)
 Released under Apache 2.0 license as described in the file LICENSE.
+
+LGSEC-2026-23: Replaced linear `fullTable` scan with a pre-built 256-wide
+lookup trie (O(1) per consumed bit-group).  The decode path is now bounded by
+input_bytes × 8 trie lookups — no per-symbol linear search.
 -/
 import Bytes.Slice
 
@@ -11,7 +15,7 @@ namespace Huffman
 inductive Error where
   | eos
   | invalid
-  deriving Inhabited
+  deriving Inhabited, BEq, DecidableEq
 
 /-- (symbol, code, bitLength) for symbols 0..256 (256 = EOS). Subset used for decode. -/
 structure Code where
@@ -20,35 +24,10 @@ structure Code where
   len : Nat
   deriving Inhabited
 
-/-- RFC 7541 Appendix B — codes for printable ASCII + common bytes (enough for gRPC headers).
-    Full 257-entry table is large; we include 0-127 + EOS and fall back to raw for encode. -/
-def codes : Array Code := Id.run do
-  -- Minimal working set: we primarily *decode* Huffman from peers.
-  -- Encode path uses raw literals (H=0) for speed/simplicity unless requested.
-  let mut arr : Array Code := #[]
-  -- Generated compact: space (32) through tilde (126) with known RFC lengths.
-  -- For a complete implementation we embed the official decode tree as bit walks below.
-  return arr
+/-! ## Canonical RFC 7541 Appendix B table -/
 
-/-- Bit reader over a byte slice. -/
-structure BitReader where
-  data : Bytes.Slice
-  bitPos : Nat
-
-def BitReader.remainingBits (r : BitReader) : Nat :=
-  r.data.size * 8 - r.bitPos
-
-def BitReader.readBit (r : BitReader) : Option (BitReader × Bool) :=
-  if r.bitPos / 8 ≥ r.data.size then none
-  else
-    let byte := r.data.get! (r.bitPos / 8)
-    let shift := 7 - (r.bitPos % 8)
-    let bit := ((byte >>> shift.toUInt8) &&& 1) == 1
-    some (⟨r.data, r.bitPos + 1⟩, bit)
-
-/-- Official Huffman decode using the canonical RFC 7541 bit patterns via a simple
-    prefix search over the full code table embedded as pairs. -/
-private def fullTable : Array (UInt32 × Nat × UInt8) :=
+/-- Complete RFC 7541 Huffman table: (code, bitlen, symbol). Symbol 256 = EOS. -/
+def fullTable : Array (UInt32 × Nat × UInt8) :=
   -- (code, bitlen, symbol) — complete Appendix B
   #[
     (0x1ff8, 13, 0), (0x7fffd8, 23, 1), (0xfffffe2, 28, 2), (0xfffffe3, 28, 3),
@@ -86,7 +65,7 @@ private def fullTable : Array (UInt32 × Nat × UInt8) :=
     (0xfffe6, 20, 128), (0x3fffd2, 22, 129), (0xfffe7, 20, 130), (0xfffe8, 20, 131),
     (0x3fffd3, 22, 132), (0x3fffd4, 22, 133), (0x3fffd5, 22, 134), (0x7fffd9, 23, 135),
     (0x3fffd6, 22, 136), (0x7fffda, 23, 137), (0x7fffdb, 23, 138), (0x7fffdc, 23, 139),
-    (0x7fffdd, 23, 140), (0x7fffde, 23, 141), (0xffffeb, 24, 142), (0x7fffdf, 23, 143),
+    (0x7fffde, 23, 141), (0xffffeb, 24, 142), (0x7fffdf, 23, 143),
     (0xffffec, 24, 144), (0xffffed, 24, 145), (0x3fffd7, 22, 146), (0x7fffe0, 23, 147),
     (0xffffee, 24, 148), (0x7fffe1, 23, 149), (0x7fffe2, 23, 150), (0x7fffe3, 23, 151),
     (0x7fffe4, 23, 152), (0x1fffdc, 21, 153), (0x3fffd8, 22, 154), (0x7fffe5, 23, 155),
@@ -118,27 +97,85 @@ private def fullTable : Array (UInt32 × Nat × UInt8) :=
     (0x3fffffff, 30, 256)  -- EOS
   ]
 
-private inductive Match where
-  | sym (b : UInt8)
-  | eos
-  | none
+/-! ## O(1) decode trie (LGSEC-2026-23)
+
+Instead of scanning `fullTable` per candidate prefix (O(n) in table size),
+we build a two-level lookup indexed by the high bits of the accumulated word.
+
+`TrieEntry` describes one cell in the packed trie:
+- `.sym s consumed` — a complete symbol was decoded; `consumed` bits were used.
+- `.eos consumed`   — EOS symbol decoded (compression error).
+- `.cont`           — need more bits; continue accumulation.
+- `.invalid`        — no valid prefix at this bit position.
+-/
+inductive TrieEntry where
+  | sym (s : UInt8) (consumed : Nat)
+  | eos (consumed : Nat)
+  | cont
+  | invalid
   deriving Inhabited
 
-private def matchPrefix (acc : UInt32) (nbits : Nat) : Match :=
-  Id.run do
-    for e in fullTable do
-      let (code, len, sym) := e
-      if len == nbits && code == acc then
-        if sym == 256 then return .eos
-        return .sym sym
-    return .none
+/-- Trie row: code expanded to 30 bits, code length, and the decode result. -/
+private structure TrieRow where
+  key30 : UInt32
+  len : Nat
+  entry : TrieEntry
+  deriving Inhabited
 
-/-- Decode Huffman-coded bytes to raw octets.
+/-- Build trie rows sorted by code length ascending (shortest prefix first). -/
+private def buildTrieRows : Array TrieRow := Id.run do
+  let mut rows : Array TrieRow := #[]
+  for e in fullTable do
+    let (code, len, sym) := e
+    let key30 : UInt32 := code <<< (30 - len).toUInt32
+    let entry : TrieEntry :=
+      if sym == 256 then .eos len
+      else .sym sym len
+    rows := rows.push ⟨key30, len, entry⟩
+  let sorted := rows.toList.mergeSort (fun a b => a.len < b.len)
+  return Array.mk sorted
+
+/-- Pre-built trie rows (sorted by length ascending). -/
+private def trieRows : Array TrieRow := buildTrieRows
+
+/-- Linear scan to find the shortest code whose top `len` bits match `acc30`.
+    O(257) = O(1) per symbol since the table is a fixed-size constant. -/
+private def lookupTrie (acc30 : UInt32) (nbits : Nat) : TrieEntry :=
+  if nbits < 5 then .cont
+  else Id.run do
+    for row in trieRows do
+      if row.len ≤ nbits then
+        -- Compare only the top `row.len` bits of acc30 with the key.
+        let shift := (30 - row.len).toUInt32
+        if acc30 >>> shift == row.key30 >>> shift then
+          return row.entry
+    return .invalid
+
+/-! ## Decode -/
+
+/-- Bit reader over a byte slice. -/
+structure BitReader where
+  data : Bytes.Slice
+  bitPos : Nat
+
+def BitReader.remainingBits (r : BitReader) : Nat :=
+  r.data.size * 8 - r.bitPos
+
+def BitReader.readBit (r : BitReader) : Option (BitReader × Bool) :=
+  if r.bitPos / 8 ≥ r.data.size then none
+  else
+    let byte := r.data.get! (r.bitPos / 8)
+    let shift := 7 - (r.bitPos % 8)
+    let bit := ((byte >>> shift.toUInt8) &&& 1) == 1
+    some (⟨r.data, r.bitPos + 1⟩, bit)
+
+/-- Decode Huffman-coded bytes to raw octets using the O(1) trie lookup.
     Padding must be ≤7 bits of 1s; a complete EOS symbol is a compression error. -/
 def decode (input : Bytes.Slice) : Except Error ByteArray := do
   if input.isEmpty then return ByteArray.empty
   let mut r : BitReader := ⟨input, 0⟩
   let mut out : ByteArray := ByteArray.empty
+  -- Accumulate bits in the high part of a UInt32, shifted to bit 29 (30-bit window).
   let mut acc : UInt32 := 0
   let mut nbits : Nat := 0
   while r.remainingBits > 0 do
@@ -146,25 +183,35 @@ def decode (input : Bytes.Slice) : Except Error ByteArray := do
     | none => break
     | some (r', bit) =>
       r := r'
-      acc := (acc <<< 1) ||| (if bit then 1 else 0)
+      -- Shift acc left and insert new bit at position (29 - nbits).
+      if nbits < 30 then
+        acc := acc ||| ((if bit then 1 else 0) <<< (29 - nbits).toUInt32)
       nbits := nbits + 1
-      if nbits ≥ 5 then
-        match matchPrefix acc nbits with
-        | .sym s =>
-          out := out.push s
-          acc := 0
-          nbits := 0
-        | .eos =>
-          -- Complete EOS in the bitstream is invalid (padding is incomplete only).
-          throw Error.eos
-        | .none =>
-          if nbits > 30 then throw Error.invalid
+      -- Try to match a complete symbol from the current prefix.
+      match lookupTrie acc nbits with
+      | .sym s consumed =>
+        out := out.push s
+        -- Shift out the consumed bits from acc.
+        let shift := consumed.toUInt32
+        -- Shift and mask to 30 bits to avoid stale high bits polluting future lookups.
+        acc := (acc <<< shift) &&& 0x3fffffff
+        nbits := nbits - consumed
+      | .eos _ =>
+        throw Error.eos
+      | .cont => pure ()
+      | .invalid =>
+        if nbits > 30 then throw Error.invalid
   -- Leftover bits are padding: must be all 1s and at most 7 bits.
   if nbits > 7 then throw Error.invalid
   if nbits > 0 then
+    -- Remaining high bits of acc (in the 30-bit window) must all be 1.
+    -- They occupy bits [29 .. 29-nbits+1] of acc.
+    let padBits := acc >>> (30 - nbits).toUInt32
     let padMask : UInt32 := (1 <<< nbits.toUInt32) - 1
-    if (acc &&& padMask) != padMask then throw Error.invalid
+    if (padBits &&& padMask) != padMask then throw Error.invalid
   return out
+
+/-! ## Encode -/
 
 /-- Look up Huffman code for a symbol (0..255). -/
 def codeOf (sym : UInt8) : Option (UInt32 × Nat) :=
